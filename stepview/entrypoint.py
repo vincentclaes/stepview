@@ -1,10 +1,6 @@
-import configparser
-import os
-import pathlib
 from collections import defaultdict
 
 import boto3
-from rich.console import Console
 from rich.table import Table
 
 from stepview import logger
@@ -39,23 +35,22 @@ def parse_aws_arn(arn):
     return result
 
 
-# def main(aws_profiles: list = [], aws_config: str = '~/.aws/credentials'):
+def get_statemachine_url(state_machine_arn: str, region: str) -> str:
+    return f"https://console.aws.amazon.com/states/home?region={region}#/statemachines/view/{state_machine_arn}"
+
+
 def main(aws_profiles: list):
-    # config = configparser.RawConfigParser()
-    # path = pathlib.PosixPath(aws_config)
-    # config.read(path.expanduser())
-    # aws_profiles = config.sections()
-    tables = []
+    table = Table()
+    table.add_column("State Machine", justify="right")
+    table.add_column("Profile")
+    table.add_column("Account")
+    table.add_column("Region")
+    table.add_column("Succeed (%)")
+    table.add_column("Failure (absolute)")
+    table.add_column("Running (absolute)")
     for profile_name in aws_profiles:
         sfn_client = boto3.Session(profile_name=profile_name).client("stepfunctions")
         state_machines = sfn_client.list_state_machines().get("stateMachines")
-        table = Table(title=f"""profile: {profile_name}""")
-        table.add_column("State Machine", justify="right")
-        table.add_column("Account")
-        table.add_column("Region")
-        table.add_column("Succeed (%)")
-        table.add_column("Error (absolute)")
-        table.add_column("Running (absolute)")
         if state_machines:
             for state_machine in state_machines:
                 states = defaultdict(int)
@@ -72,70 +67,58 @@ def main(aws_profiles: list):
                 )
                 failed = states["FAILED"]
                 running = states["RUNNING"]
-                state_machine_name = state_machine.get("name")
                 arn_parsed = parse_aws_arn(state_machine_arn)
                 account = arn_parsed.get("account")
                 region = arn_parsed.get("region")
+                state_machine_name = state_machine.get("name")
+                state_machine_url = get_statemachine_url(
+                    state_machine_arn=state_machine_arn, region=region
+                )
+                state_machine_name_url = (
+                    f"[link={state_machine_url}]{state_machine_name}[/link]"
+                )
                 table.add_row(
-                    state_machine_name,
+                    state_machine_name_url,
+                    profile_name,
                     account,
                     region,
                     f"{succeeded_perc}",
                     f"{failed}",
                     f"{running}",
                 )
-            tables.append(table)
         else:
             logger.info(f"no statemachines found for profile {profile_name}")
-    for table in tables:
-        console = Console()
-        console.print(table)
-    return tables
+    return table
 
-
-from rich.markdown import Markdown
 
 from textual import events
 from textual.app import App
-from textual.widgets import Header, Footer, Placeholder, ScrollView
+from textual.widgets import Header, Footer, ScrollView
 
 
 class StepViewTUI(App):
-    """An example of a very simple Textual App."""
+    """StepView shows a table with stepfunction statemachine summaries."""
 
     async def on_load(self, event: events.Load) -> None:
         """Bind keys with the app loads (but before entering application
         mode)"""
-        await self.bind("b", "view.toggle('sidebar')", "Toggle sidebar")
         await self.bind("q", "quit", "Quit")
         await self.bind("escape", "quit", "Quit")
 
     async def on_mount(self, event: events.Mount) -> None:
         """Create and dock the widgets."""
 
-        # A scrollview to contain the markdown file
         body = ScrollView(gutter=1)
 
-        # Header / footer / dock
         await self.view.dock(Header(), edge="top")
         await self.view.dock(Footer(), edge="bottom")
-        # await self.view.dock(Placeholder(), edge="left", size=30, name="sidebar")
-
-        # Dock the body in the remaining space
         await self.view.dock(body, edge="right")
 
-        # async def get_markdown(filename: str) -> None:
-        #     with open(filename, "r", encoding="utf8") as fh:
-        #         readme = Markdown(fh.read(), hyperlinks=True)
-        #     await body.update(readme)
-
         async def get_stepfunction_data():
-            tables = main(aws_profiles=["datajob"])
-            for table in tables:
-                await body.update(table)
+            table = main(aws_profiles=["datajob", "default"])
+            await body.update(table)
 
-        # await self.call_later(get_markdown, "richreadme.md")
         await self.call_later(get_stepfunction_data)
 
 
-StepViewTUI.run(title="STEPVIEW", log="textual.log")
+StepViewTUI.run(title="STEPVIEW")
