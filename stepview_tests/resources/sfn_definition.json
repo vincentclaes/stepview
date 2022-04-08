@@ -1,0 +1,71 @@
+{
+	"StartAt": "98d6c898d9a74da586ca53d2e2fa85f8",
+	"States": {
+		"98d6c898d9a74da586ca53d2e2fa85f8": {
+			"Type": "Parallel",
+			"Next": "550e9a3423eb48b7828e880fd3fd65dd",
+			"Branches": [{
+				"StartAt": "data-pipeline-parallel-task3",
+				"States": {
+					"data-pipeline-parallel-task3": {
+						"Parameters": {
+							"JobName": "data-pipeline-parallel-task3"
+						},
+						"Resource": "arn:aws:states:::glue:startJobRun.sync",
+						"Type": "Task",
+						"End": true
+					}
+				}
+			}, {
+				"StartAt": "data-pipeline-parallel-task1",
+				"States": {
+					"data-pipeline-parallel-task1": {
+						"Parameters": {
+							"JobName": "data-pipeline-parallel-task1"
+						},
+						"Resource": "arn:aws:states:::glue:startJobRun.sync",
+						"Type": "Task",
+						"End": true
+					}
+				}
+			}]
+		},
+		"550e9a3423eb48b7828e880fd3fd65dd": {
+			"Type": "Parallel",
+			"Next": "data-pipeline-parallel-task5",
+			"Branches": [{
+				"StartAt": "data-pipeline-parallel-task2",
+				"States": {
+					"data-pipeline-parallel-task2": {
+						"Parameters": {
+							"JobName": "data-pipeline-parallel-task2"
+						},
+						"Resource": "arn:aws:states:::glue:startJobRun.sync",
+						"Type": "Task",
+						"End": true
+					}
+				}
+			}, {
+				"StartAt": "data-pipeline-parallel-task4",
+				"States": {
+					"data-pipeline-parallel-task4": {
+						"Parameters": {
+							"JobName": "data-pipeline-parallel-task4"
+						},
+						"Resource": "arn:aws:states:::glue:startJobRun.sync",
+						"Type": "Task",
+						"End": true
+					}
+				}
+			}]
+		},
+		"data-pipeline-parallel-task5": {
+			"Parameters": {
+				"JobName": "data-pipeline-parallel-task5"
+			},
+			"Resource": "arn:aws:states:::glue:startJobRun.sync",
+			"Type": "Task",
+			"End": true
+		}
+	}
+}
