@@ -1,13 +1,21 @@
 import datetime
 import os
 import unittest
+from pathlib import Path
+from unittest.mock import Mock
 from unittest.mock import patch
 
 import boto3
 from dateutil.tz import tzutc
 from moto import mock_stepfunctions
+from textual.app import App
+from typer.testing import CliRunner
 
+import stepview.data
 from stepview import entrypoint
+from stepview.tui import StepViewTUI
+
+current_dir = Path(__file__).resolve().parent
 
 
 def list_executions(status: list):
@@ -44,11 +52,13 @@ def list_executions(status: list):
 
 
 class TestStepView(unittest.TestCase):
-    @patch("stepview.entrypoint._list_executions_for_state_machine")
+    @patch("stepview.data._list_executions_for_state_machine")
     @mock_stepfunctions
     def test_get_stepfunctions_status_happy_flow(self, m_list_executions):
-        os.environ["AWS_SHARED_CREDENTIALS_FILE"] = "./resources/credentials"
-        with open("./resources/sfn_definition.json") as f:
+        os.environ["AWS_SHARED_CREDENTIALS_FILE"] = str(
+            Path(current_dir, "resources", "credentials")
+        )
+        with open(Path(current_dir, "resources", "sfn_definition.json")) as f:
             sfn_definition = f.read()
 
         roleArn = "arn:aws:iam::012345678901:role/service-role/AmazonSageMaker-ExecutionRole-20191008T190827"
@@ -77,6 +87,21 @@ class TestStepView(unittest.TestCase):
         ]
         self.exception_ = None
         try:
-            entrypoint.main(aws_profiles=["profile1", "profile2"])
+            stepview.data.main(aws_profiles=["profile1", "profile2"])
         except Exception as e:
             self.assertIsNone(self.exception_)
+
+
+class TestStepViewCli(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.runner = CliRunner()
+
+    @patch.object(App, "run")
+    def test_cli(self, m_textual_run):
+        # for some reason i cannot call the run function when instantiating
+        # StepViewTui (subclass of textual.app.App) in this test.
+        result = self.runner.invoke(
+            stepview.entrypoint.app, ["--profiles", "profile1 profile2 profile3"]
+        )
+        self.assertEqual(result.exit_code, 0)
