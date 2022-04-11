@@ -1,6 +1,7 @@
 import datetime
 import os
 import unittest
+from pathlib import Path
 from unittest.mock import Mock
 from unittest.mock import patch
 
@@ -13,6 +14,8 @@ from typer.testing import CliRunner
 import stepview.data
 from stepview import entrypoint
 from stepview.tui import StepViewTUI
+
+current_dir = Path(__file__).resolve().parent
 
 
 def list_executions(status: list):
@@ -49,11 +52,13 @@ def list_executions(status: list):
 
 
 class TestStepView(unittest.TestCase):
-    @patch("stepview.entrypoint._list_executions_for_state_machine")
+    @patch("stepview.data._list_executions_for_state_machine")
     @mock_stepfunctions
     def test_get_stepfunctions_status_happy_flow(self, m_list_executions):
-        os.environ["AWS_SHARED_CREDENTIALS_FILE"] = "./resources/credentials"
-        with open("./resources/sfn_definition.json") as f:
+        os.environ["AWS_SHARED_CREDENTIALS_FILE"] = str(
+            Path(current_dir, "resources", "credentials")
+        )
+        with open(Path(current_dir, "resources", "sfn_definition.json")) as f:
             sfn_definition = f.read()
 
         roleArn = "arn:aws:iam::012345678901:role/service-role/AmazonSageMaker-ExecutionRole-20191008T190827"

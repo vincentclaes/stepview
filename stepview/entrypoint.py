@@ -1,3 +1,6 @@
+from typing import AnyStr
+from typing import List
+
 import typer
 
 from stepview.tui import StepViewTUI
@@ -11,10 +14,27 @@ def run():
 
 
 def parse_string_to_list(profiles: str) -> list:
-    return profiles.split(" ")
+    """Watch out for some dirty code. afaik, typer cannot parse a list of
+    strings out of the box. If you know how to do this, please let me know by
+    creating a github issue.
+
+    A list of Paths does work:
+    https://typer.tiangolo.com/tutorial/multiple-values/arguments-with-multiple-values/
+    """
+    return profiles[0].split(",")
 
 
 @app.command()
-def stepview(profiles: str = typer.Option(..., callback=parse_string_to_list)):
-    # StepViewTUI(aws_profiles=profiles).run(title="STEPVIEW")
-    StepViewTUI().run(title="STEPVIEW")
+def stepview(
+    profiles: List[str] = typer.Option(
+        ...,
+        callback=parse_string_to_list,
+        help="specify the aws profiles you want to use as a comma seperated string, "
+        "profile1,profile2,profile3,...",
+    )
+):
+    StepViewTUI.run(title="STEPVIEW", aws_profiles=profiles)
+
+
+if __name__ == "__main__":
+    run()

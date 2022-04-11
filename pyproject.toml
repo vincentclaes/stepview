@@ -17,6 +17,7 @@ typer = "^0.4.1"
 moto = "^3.1.3"
 pre-commit = "^2.18.1"
 black = "^22.3.0"
+pytest = "^7.1.1"
 
 [build-system]
 requires = ["poetry-core>=1.0.0"]
