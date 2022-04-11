@@ -1,13 +1,18 @@
 import datetime
 import os
 import unittest
+from unittest.mock import Mock
 from unittest.mock import patch
 
 import boto3
 from dateutil.tz import tzutc
 from moto import mock_stepfunctions
+from textual.app import App
+from typer.testing import CliRunner
 
+import stepview.data
 from stepview import entrypoint
+from stepview.tui import StepViewTUI
 
 
 def list_executions(status: list):
@@ -77,6 +82,21 @@ class TestStepView(unittest.TestCase):
         ]
         self.exception_ = None
         try:
-            entrypoint.main(aws_profiles=["profile1", "profile2"])
+            stepview.data.main(aws_profiles=["profile1", "profile2"])
         except Exception as e:
             self.assertIsNone(self.exception_)
+
+
+class TestStepViewCli(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.runner = CliRunner()
+
+    @patch.object(App, "run")
+    def test_cli(self, m_textual_run):
+        # for some reason i cannot call the run function when instantiating
+        # StepViewTui (subclass of textual.app.App) in this test.
+        result = self.runner.invoke(
+            stepview.entrypoint.app, ["--profiles", "profile1 profile2 profile3"]
+        )
+        self.assertEqual(result.exit_code, 0)
