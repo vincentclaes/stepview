@@ -1,4 +1,3 @@
-from typing import AnyStr
 from typing import List
 
 import typer
@@ -29,8 +28,8 @@ def stepview(
     profiles: List[str] = typer.Option(
         ...,
         callback=parse_string_to_list,
-        help="specify the aws profiles you want to use as a comma seperated string, "
-        "profile1,profile2,profile3,...",
+        help="specify the aws profiles you want to use as a comma seperated string. "
+        "For example '--profiles profile1,profile2,profile3,...'",
     )
 ):
     StepViewTUI.run(title="STEPVIEW", aws_profiles=profiles)
