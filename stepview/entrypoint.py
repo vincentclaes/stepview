@@ -37,7 +37,7 @@ def stepview(
         "you can use 'day', 'week', 'month', 'year'",
     ),
 ):
-    StepViewTUI.run(title="STEPVIEW", aws_profiles=profiles)
+    StepViewTUI.run(title="STEPVIEW", aws_profiles=profiles, period=period)
 
 
 if __name__ == "__main__":
