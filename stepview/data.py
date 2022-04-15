@@ -1,9 +1,25 @@
 from collections import defaultdict
+from dataclasses import dataclass
 
 import boto3
+import pendulum
 from rich.table import Table
 
 from stepview import logger
+
+__now = pendulum.now()
+__yesterday = __now.subtract(days=1)
+
+
+@dataclass
+class States:
+    """States that we pass to the TUI table."""
+
+    total_executions: int
+    succeeded: str
+    succeeded_perc: str
+    failed: str
+    running: str
 
 
 def main(aws_profiles: list):
@@ -12,6 +28,7 @@ def main(aws_profiles: list):
     table.add_column("Profile")
     table.add_column("Account")
     table.add_column("Region")
+    table.add_column("Total")
     table.add_column("Succeed (%)")
     table.add_column("Failure (absolute)")
     table.add_column("Running (absolute)")
@@ -20,20 +37,10 @@ def main(aws_profiles: list):
         state_machines = sfn_client.list_state_machines().get("stateMachines")
         if state_machines:
             for state_machine in state_machines:
-                states = defaultdict(int)
                 state_machine_arn = state_machine.get("stateMachineArn")
-                executions = _list_executions_for_state_machine(
+                states = get_all_states_of_executions(
                     sfn_client=sfn_client, state_machine_arn=state_machine_arn
                 )
-                for execution in executions.get("executions"):
-                    states[execution["status"]] += 1
-                total_executions = sum(states.values())
-                succeeded = states["SUCCEEDED"]
-                succeeded_perc = (
-                    (succeeded / total_executions) * 100 if total_executions > 0 else 0
-                )
-                failed = states["FAILED"]
-                running = states["RUNNING"]
                 arn_parsed = parse_aws_arn(state_machine_arn)
                 account = arn_parsed.get("account")
                 region = arn_parsed.get("region")
@@ -49,13 +56,61 @@ def main(aws_profiles: list):
                     profile_name,
                     account,
                     region,
-                    f"{succeeded_perc}",
-                    f"{failed}",
-                    f"{running}",
+                    f"{states.total_executions}" f"{states.succeeded_perc}",
+                    f"{states.failed}",
+                    f"{states.running}",
                 )
         else:
             logger.info(f"no statemachines found for profile {profile_name}")
     return table
+
+
+def get_all_states_of_executions(sfn_client: object, state_machine_arn: str) -> States:
+
+    states = defaultdict(int)
+    states = get_executions_for_statemachine(sfn_client, state_machine_arn, states)
+    total_executions = sum(states.values())
+    succeeded = states["SUCCEEDED"]
+    succeeded_perc = (succeeded / total_executions) * 100 if total_executions > 0 else 0
+    failed = states["FAILED"]
+    running = states["RUNNING"]
+
+    return States(
+        total_executions=total_executions,
+        succeeded=succeeded,
+        succeeded_perc=succeeded_perc,
+        failed=failed,
+        running=running,
+    )
+
+
+def get_executions_for_statemachine(
+    sfn_client: object,
+    state_machine_arn: str,
+    states: defaultdict,
+    nextToken: str = None,
+) -> defaultdict:
+    executions = list_executions_for_state_machine(
+        sfn_client=sfn_client, state_machine_arn=state_machine_arn, nextToken=nextToken
+    )
+    for execution in executions.get("executions"):
+        start_date = execution.get("startDate")
+        period = pendulum.period(__now, pendulum.instance(start_date)).days
+        if period >= 0:
+            states[execution["status"]] += 1
+        else:
+            logger.debug("we only want executions of the last day.")
+            continue
+    else:
+        logger.debug("for loop ended normally, checking if we have a next token.")
+        if executions.get("nextToken"):
+            states = get_executions_for_statemachine(
+                sfn_client=sfn_client,
+                state_machine_arn=state_machine_arn,
+                states=states,
+                nextToken=executions.get("nextToken"),
+            )
+    return states
 
 
 def get_statemachine_url(state_machine_arn: str, region: str) -> str:
@@ -87,5 +142,13 @@ def parse_aws_arn(arn):
     return result
 
 
-def _list_executions_for_state_machine(sfn_client: object, state_machine_arn: str):
-    return sfn_client.list_executions(stateMachineArn=state_machine_arn)
+def list_executions_for_state_machine(
+    sfn_client: object, state_machine_arn: str, nextToken: str
+):
+    if nextToken is None:
+        executions = sfn_client.list_executions(stateMachineArn=state_machine_arn)
+    else:
+        executions = sfn_client.list_executions(
+            stateMachineArn=state_machine_arn, nextToken=nextToken
+        )
+    return executions
