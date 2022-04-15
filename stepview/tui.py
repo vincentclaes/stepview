@@ -10,9 +10,10 @@ from stepview.data import main
 class StepViewTUI(App):
     """StepView shows a table with stepfunction statemachine summaries."""
 
-    def __init__(self, aws_profiles, *args, **kwargs):
+    def __init__(self, aws_profiles: list, period: str, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.aws_profiles = aws_profiles
+        self.period = period
 
     async def on_load(self, event: events.Load) -> None:
         """Bind keys with the app loads (but before entering application

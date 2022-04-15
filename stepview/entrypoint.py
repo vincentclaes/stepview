@@ -30,7 +30,12 @@ def stepview(
         callback=parse_string_to_list,
         help="specify the aws profiles you want to use as a comma seperated string. "
         "For example '--profiles profile1,profile2,profile3,...'",
-    )
+    ),
+    period: str = typer.Option(
+        "day",
+        help="specify the time period for which you wish to look back."
+        "you can use 'day', 'week', 'month', 'year'",
+    ),
 ):
     StepViewTUI.run(title="STEPVIEW", aws_profiles=profiles)
 

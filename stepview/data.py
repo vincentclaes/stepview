@@ -22,7 +22,15 @@ class States:
     running: str
 
 
-def main(aws_profiles: list):
+@dataclass
+class Periods:
+    """periods object."""
+
+    start_date_of_period: pendulum.DateTime
+    period_attribute: str
+
+
+def main(aws_profiles: list, period: str):
     table = Table()
     table.add_column("State Machine", justify="right")
     table.add_column("Profile")
@@ -39,7 +47,9 @@ def main(aws_profiles: list):
             for state_machine in state_machines:
                 state_machine_arn = state_machine.get("stateMachineArn")
                 states = get_all_states_of_executions(
-                    sfn_client=sfn_client, state_machine_arn=state_machine_arn
+                    sfn_client=sfn_client,
+                    state_machine_arn=state_machine_arn,
+                    period=period,
                 )
                 arn_parsed = parse_aws_arn(state_machine_arn)
                 account = arn_parsed.get("account")
@@ -65,10 +75,18 @@ def main(aws_profiles: list):
     return table
 
 
-def get_all_states_of_executions(sfn_client: object, state_machine_arn: str) -> States:
+def get_all_states_of_executions(
+    sfn_client: object, state_machine_arn: str, period: str
+) -> States:
 
     states = defaultdict(int)
-    states = get_executions_for_statemachine(sfn_client, state_machine_arn, states)
+    period_object = get_period_objects(period=period)
+    states = get_executions_for_statemachine(
+        sfn_client=sfn_client,
+        state_machine_arn=state_machine_arn,
+        states=states,
+        period_object=period_object,
+    )
     total_executions = sum(states.values())
     succeeded = states["SUCCEEDED"]
     succeeded_perc = (succeeded / total_executions) * 100 if total_executions > 0 else 0
@@ -84,10 +102,30 @@ def get_all_states_of_executions(sfn_client: object, state_machine_arn: str) -> 
     )
 
 
+def get_period_objects(period: str):
+    periods_ = {
+        "minute": Periods(pendulum.now().subtract(minutes=1), "minutes"),
+        "hour": Periods(pendulum.now().subtract(hours=1), "hours"),
+        "today": Periods(pendulum.now().start_of("day"), "hours"),
+        "day": Periods(pendulum.now().subtract(days=1), "hours"),
+        "week": Periods(pendulum.now().subtract(weeks=1), "days"),
+        "month": Periods(pendulum.now().subtract(months=1), "days"),
+        "year": Periods(pendulum.now().subtract(years=1), "days"),
+    }
+    try:
+        period_object = periods_[period]
+    except KeyError as e:
+        raise NameError(
+            f"We did not recognize the value {period}. Please choose from {periods_.keys()}"
+        )
+    return period_object
+
+
 def get_executions_for_statemachine(
     sfn_client: object,
     state_machine_arn: str,
     states: defaultdict,
+    period_object: Periods,
     nextToken: str = None,
 ) -> defaultdict:
     executions = list_executions_for_state_machine(
@@ -95,8 +133,14 @@ def get_executions_for_statemachine(
     )
     for execution in executions.get("executions"):
         start_date = execution.get("startDate")
-        period = pendulum.period(__now, pendulum.instance(start_date)).days
-        if period >= 0:
+        # get the difference between the start date of the period set by the user
+        # and the start date of the execution
+        pendulum_period = pendulum.period(
+            pendulum.instance(start_date), period_object.start_date_of_period
+        )
+        # based on  the period
+        period_difference = getattr(pendulum_period, period_object.period_attribute)
+        if period_difference <= 0:
             states[execution["status"]] += 1
         else:
             logger.debug("we only want executions of the last day.")
@@ -108,6 +152,7 @@ def get_executions_for_statemachine(
                 sfn_client=sfn_client,
                 state_machine_arn=state_machine_arn,
                 states=states,
+                period_object=period_object,
                 nextToken=executions.get("nextToken"),
             )
     return states

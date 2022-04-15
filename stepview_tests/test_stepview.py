@@ -92,7 +92,7 @@ class TestStepView(unittest.TestCase):
         ]
         self.exception_ = None
         try:
-            stepview.data.main(aws_profiles=["profile1", "profile2"])
+            stepview.data.main(aws_profiles=["profile1", "profile2"], period="day")
         except Exception as e:
             self.exception_ = e
 
@@ -118,6 +118,7 @@ class TestStepView(unittest.TestCase):
             states = stepview.data.get_all_states_of_executions(
                 sfn_client=sfn_client,
                 state_machine_arn=statemachine.get("stateMachineArn"),
+                period="day",
             )
 
         except Exception as e:
@@ -143,18 +144,18 @@ class TestStepView(unittest.TestCase):
         m_list_executions.side_effect = [
             {
                 "nextToken": "some-token",
-                **list_executions(["SUCCEEDED", "SUCCEEDED", "SUCCEEDED", "SUCCEEDED"]),
+                **list_executions(["SUCCEEDED"]),
             },
-            list_executions(
-                ["FAILED", "FAILED", "FAILED", "FAILED"], start_date=yesterday
-            ),
+            list_executions(["FAILED"], start_date=yesterday),
         ]
 
         states = stepview.data.get_all_states_of_executions(
-            sfn_client=sfn_client, state_machine_arn=statemachine.get("stateMachineArn")
+            sfn_client=sfn_client,
+            state_machine_arn=statemachine.get("stateMachineArn"),
+            period="day",
         )
 
-        self.assertEqual(states.succeeded, 4)
+        self.assertEqual(states.succeeded, 1)
         self.assertEqual(states.succeeded_perc, 100.0)
         self.assertEqual(states.failed, 0)
 
