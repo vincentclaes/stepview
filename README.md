@@ -34,7 +34,7 @@ if you do not know how to do it.
 The Time period from which you can choose from
 are `minute`, `hour`, `today`, `day`, `week`, `month`, `year`
 
-    stepview --profile default,some-profile --period year
+    stepview --profile profile-foo,profile-bar --period year
 
 ## Suggestions
 
