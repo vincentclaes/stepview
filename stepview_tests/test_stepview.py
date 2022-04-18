@@ -347,6 +347,6 @@ class TestStepViewCli(unittest.TestCase):
         # for some reason i cannot call the run function when instantiating
         # StepViewTui (subclass of textual.app.App) in this test.
         result = self.runner.invoke(
-            stepview.entrypoint.app, ["--profiles", "profile1 profile2 profile3"]
+            stepview.entrypoint.app, ["--profile", "profile1 profile2 profile3"]
         )
         self.assertEqual(result.exit_code, 0)
