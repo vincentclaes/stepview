@@ -2,7 +2,6 @@ import datetime
 import os
 import unittest
 from pathlib import Path
-from unittest.mock import Mock
 from unittest.mock import patch
 
 import boto3
@@ -134,10 +133,98 @@ class TestStepView(unittest.TestCase):
 
     @mock_stepfunctions
     @patch("stepview.data.list_executions_for_state_machine")
+    def test_stepview_on_time_period_minute(self, m_list_executions):
+        sfn_client, role, statemachine = create_statemachine("sm1", "profile1")
+
+        last_minute = datetime.datetime.fromisoformat(
+            pendulum.now().subtract(minutes=1, seconds=2).to_iso8601_string()
+        )
+        m_list_executions.side_effect = [
+            {
+                "nextToken": "some-token",
+                **list_executions(["SUCCEEDED"]),
+            },
+            list_executions(["FAILED"], start_date=last_minute),
+        ]
+
+        states = stepview.data.get_all_states_of_executions(
+            sfn_client=sfn_client,
+            state_machine_arn=statemachine.get("stateMachineArn"),
+            period=stepview.data.MINUTE,
+        )
+
+        self.assertEqual(states.succeeded, 1)
+        self.assertEqual(states.succeeded_perc, 100.0)
+        self.assertEqual(states.failed, 0)
+
+    @mock_stepfunctions
+    @patch("stepview.data.list_executions_for_state_machine")
+    def test_stepview_on_time_period_hour(self, m_list_executions):
+
+        sfn_client, role, statemachine = create_statemachine("sm1", "profile1")
+
+        # we substract the granularity of the PERIODS_LIST.
+        # for hour the granularity is set to minute.
+        last_hour = datetime.datetime.fromisoformat(
+            pendulum.now().subtract(hours=1, minutes=1).to_iso8601_string()
+        )
+        m_list_executions.side_effect = [
+            {
+                "nextToken": "some-token",
+                **list_executions(["SUCCEEDED"]),
+            },
+            list_executions(["FAILED"], start_date=last_hour),
+        ]
+
+        states = stepview.data.get_all_states_of_executions(
+            sfn_client=sfn_client,
+            state_machine_arn=statemachine.get("stateMachineArn"),
+            period=stepview.data.HOUR,
+        )
+
+        self.assertEqual(states.succeeded, 1)
+        self.assertEqual(states.succeeded_perc, 100.0)
+        self.assertEqual(states.failed, 0)
+
+    @mock_stepfunctions
+    @patch("stepview.data.list_executions_for_state_machine")
+    def test_stepview_on_time_period_today(self, m_list_executions):
+
+        sfn_client, role, statemachine = create_statemachine("sm1", "profile1")
+
+        # we substract the granularity of the PERIODS_LIST.
+        # for today the granularity is set to hour
+        # but in this case we set to seconds because only at midnight
+        # days=1 will be seen as part of today.
+        not_today = datetime.datetime.fromisoformat(
+            pendulum.now().subtract(days=1, seconds=1).to_iso8601_string()
+        )
+        m_list_executions.side_effect = [
+            {
+                "nextToken": "some-token",
+                **list_executions(["SUCCEEDED"]),
+            },
+            list_executions(["FAILED"], start_date=not_today),
+        ]
+
+        states = stepview.data.get_all_states_of_executions(
+            sfn_client=sfn_client,
+            state_machine_arn=statemachine.get("stateMachineArn"),
+            period=stepview.data.TODAY,
+        )
+
+        self.assertEqual(states.succeeded, 1)
+        self.assertEqual(states.succeeded_perc, 100.0)
+        self.assertEqual(states.failed, 0)
+
+    @mock_stepfunctions
+    @patch("stepview.data.list_executions_for_state_machine")
     def test_stepview_on_time_period_day(self, m_list_executions):
 
         sfn_client, role, statemachine = create_statemachine("sm1", "profile1")
 
+        # we substract the granularity of the PERIODS_LIST.
+        # for day the granularity is set to hour.
         yesterday = datetime.datetime.fromisoformat(
             pendulum.now().subtract(days=1, hours=1).to_iso8601_string()
         )
@@ -152,7 +239,97 @@ class TestStepView(unittest.TestCase):
         states = stepview.data.get_all_states_of_executions(
             sfn_client=sfn_client,
             state_machine_arn=statemachine.get("stateMachineArn"),
-            period="day",
+            period=stepview.data.DAY,
+        )
+
+        self.assertEqual(states.succeeded, 1)
+        self.assertEqual(states.succeeded_perc, 100.0)
+        self.assertEqual(states.failed, 0)
+
+    @mock_stepfunctions
+    @patch("stepview.data.list_executions_for_state_machine")
+    def test_stepview_on_time_period_week(self, m_list_executions):
+
+        sfn_client, role, statemachine = create_statemachine("sm1", "profile1")
+
+        # we substract the granularity of the PERIODS_LIST.
+        # for week the granularity is set to hour,
+        # therefore we need to go back 1 month and 1 day.
+        last_week = datetime.datetime.fromisoformat(
+            pendulum.now().subtract(weeks=1, days=1).to_iso8601_string()
+        )
+        m_list_executions.side_effect = [
+            {
+                "nextToken": "some-token",
+                **list_executions(["SUCCEEDED"]),
+            },
+            list_executions(["FAILED"], start_date=last_week),
+        ]
+
+        states = stepview.data.get_all_states_of_executions(
+            sfn_client=sfn_client,
+            state_machine_arn=statemachine.get("stateMachineArn"),
+            period=stepview.data.WEEK,
+        )
+
+        self.assertEqual(states.succeeded, 1)
+        self.assertEqual(states.succeeded_perc, 100.0)
+        self.assertEqual(states.failed, 0)
+
+    @mock_stepfunctions
+    @patch("stepview.data.list_executions_for_state_machine")
+    def test_stepview_on_time_period_month(self, m_list_executions):
+
+        sfn_client, role, statemachine = create_statemachine("sm1", "profile1")
+
+        # we substract the granularity of the PERIODS_LIST.
+        # for month the granularity is set to hour,
+        # therefore we need to go back 1 month and 1 day.
+        last_month = datetime.datetime.fromisoformat(
+            pendulum.now().subtract(months=1, days=1).to_iso8601_string()
+        )
+        m_list_executions.side_effect = [
+            {
+                "nextToken": "some-token",
+                **list_executions(["SUCCEEDED"]),
+            },
+            list_executions(["FAILED"], start_date=last_month),
+        ]
+
+        states = stepview.data.get_all_states_of_executions(
+            sfn_client=sfn_client,
+            state_machine_arn=statemachine.get("stateMachineArn"),
+            period=stepview.data.MONTH,
+        )
+
+        self.assertEqual(states.succeeded, 1)
+        self.assertEqual(states.succeeded_perc, 100.0)
+        self.assertEqual(states.failed, 0)
+
+    @mock_stepfunctions
+    @patch("stepview.data.list_executions_for_state_machine")
+    def test_stepview_on_time_period_year(self, m_list_executions):
+
+        sfn_client, role, statemachine = create_statemachine("sm1", "profile1")
+
+        # we substract the granularity of the PERIODS_LIST.
+        # for year the granularity is set to hour,
+        # therefore we need to go back 1 year and 1 day.
+        last_year = datetime.datetime.fromisoformat(
+            pendulum.now().subtract(years=1, days=1).to_iso8601_string()
+        )
+        m_list_executions.side_effect = [
+            {
+                "nextToken": "some-token",
+                **list_executions(["SUCCEEDED"]),
+            },
+            list_executions(["FAILED"], start_date=last_year),
+        ]
+
+        states = stepview.data.get_all_states_of_executions(
+            sfn_client=sfn_client,
+            state_machine_arn=statemachine.get("stateMachineArn"),
+            period=stepview.data.YEAR,
         )
 
         self.assertEqual(states.succeeded, 1)

@@ -7,9 +7,6 @@ from rich.table import Table
 
 from stepview import logger
 
-__now = pendulum.now()
-__yesterday = __now.subtract(days=1)
-
 
 @dataclass
 class States:
@@ -27,7 +24,26 @@ class Periods:
     """periods object."""
 
     start_date_of_period: pendulum.DateTime
-    period_attribute: str
+    granularity: str
+
+
+MINUTE = "minute"
+HOUR = "hour"
+TODAY = "today"
+DAY = "day"
+WEEK = "week"
+MONTH = "month"
+YEAR = "year"
+
+PERIODS_LIST = {
+    MINUTE: Periods(pendulum.now().subtract(minutes=1), "microseconds"),
+    HOUR: Periods(pendulum.now().subtract(hours=1), "seconds"),
+    TODAY: Periods(pendulum.now().start_of("day"), "seconds"),
+    DAY: Periods(pendulum.now().subtract(days=1), "seconds"),
+    WEEK: Periods(pendulum.now().subtract(weeks=1), "hours"),
+    MONTH: Periods(pendulum.now().subtract(months=1), "hours"),
+    YEAR: Periods(pendulum.now().subtract(years=1), "hours"),
+}
 
 
 def main(aws_profiles: list, period: str):
@@ -66,7 +82,8 @@ def main(aws_profiles: list, period: str):
                     profile_name,
                     account,
                     region,
-                    f"{states.total_executions}" f"{states.succeeded_perc}",
+                    f"{states.total_executions}",
+                    f"{states.succeeded_perc}",
                     f"{states.failed}",
                     f"{states.running}",
                 )
@@ -103,20 +120,12 @@ def get_all_states_of_executions(
 
 
 def get_period_objects(period: str):
-    periods_ = {
-        "minute": Periods(pendulum.now().subtract(minutes=1), "minutes"),
-        "hour": Periods(pendulum.now().subtract(hours=1), "hours"),
-        "today": Periods(pendulum.now().start_of("day"), "hours"),
-        "day": Periods(pendulum.now().subtract(days=1), "hours"),
-        "week": Periods(pendulum.now().subtract(weeks=1), "days"),
-        "month": Periods(pendulum.now().subtract(months=1), "days"),
-        "year": Periods(pendulum.now().subtract(years=1), "days"),
-    }
+
     try:
-        period_object = periods_[period]
+        period_object = PERIODS_LIST[period]
     except KeyError as e:
         raise NameError(
-            f"We did not recognize the value {period}. Please choose from {periods_.keys()}"
+            f"We did not recognize the value {period}. Please choose from {PERIODS_LIST.keys()}"
         )
     return period_object
 
@@ -139,7 +148,7 @@ def get_executions_for_statemachine(
             pendulum.instance(start_date), period_object.start_date_of_period
         )
         # based on  the period
-        period_difference = getattr(pendulum_period, period_object.period_attribute)
+        period_difference = getattr(pendulum_period, period_object.granularity)
         if period_difference <= 0:
             states[execution["status"]] += 1
         else:

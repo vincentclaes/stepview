@@ -2,6 +2,7 @@ from typing import List
 
 import typer
 
+from stepview.data import PERIODS_LIST
 from stepview.tui import StepViewTUI
 
 app = typer.Typer()
@@ -34,10 +35,12 @@ def stepview(
     period: str = typer.Option(
         "day",
         help="specify the time period for which you wish to look back."
-        "you can use 'day', 'week', 'month', 'year'",
+        f"you can choose from {PERIODS_LIST.keys()}",
     ),
 ):
-    StepViewTUI.run(title="STEPVIEW", aws_profiles=profiles, period=period)
+    StepViewTUI.run(
+        title=f"STEPVIEW (period: {period})", aws_profiles=profiles, period=period
+    )
 
 
 if __name__ == "__main__":
