@@ -28,13 +28,14 @@ multiple AWS profiles.
 
 ## Example
 
-Specify an AWS named profile and a time period you wish to use.
-Be sure to [setup an AWS profile](https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-profiles.html#cli-configure-profiles-create)
-if you do not know how to do it.
-The Time period from which you can choose from
-are `minute`, `hour`, `today`, `day`, `week`, `month`, `year`
+- [Setup an AWS named profile](https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-profiles.html#cli-configure-profiles-create).
+- Choose a time period: `minute`, `hour`, `today`, `day`, `week`, `month`, `year`.
+- Run the command:
 
-    stepview --profile profile-foo,profile-bar --period year
+
+    stepview --profile default,profile-b,profile-a --period year
+
+![stepview-screencast](https://public-assets-vincent-claes.s3.eu-west-1.amazonaws.com/stepview/stepview-take-2.gif)
 
 ## Suggestions
 
