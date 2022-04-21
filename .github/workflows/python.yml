@@ -27,7 +27,7 @@ jobs:
         python-version: ${{ matrix.python-version }}
 
     - name: Install dependencies
-      run: make setup
+      run: make install
 
     - name: Run test suite
       run: make tests
