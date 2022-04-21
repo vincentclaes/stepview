@@ -35,7 +35,7 @@ multiple AWS profiles.
 stepview --profile default,profile-b,profile-a --period year
 ```
 
-<img src="https://public-assets-vincent-claes.s3.eu-west-1.amazonaws.com/stepview/stepview.gif">
+<img src="https://public-assets-vincent-claes.s3.eu-west-1.amazonaws.com/stepview/stepview.gif" width="100%">
 
 ## Suggestions
 
