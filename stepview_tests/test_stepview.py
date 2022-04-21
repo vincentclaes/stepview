@@ -55,7 +55,7 @@ def create_statemachine(name, profile):
     # point boto3 to our local credentials file
     # using an env var.
     os.environ["AWS_SHARED_CREDENTIALS_FILE"] = str(
-        Path(current_dir, "resources", "credentials")
+        Path(current_dir, "resources", "mock_credentials")
     )
 
     # read our dummy statemachine definition
