@@ -32,7 +32,7 @@ multiple AWS profiles.
 - Choose a time period: `minute`, `hour`, `today`, `day`, `week`, `month`, `year`.
 
 ```
-stepview --profile default,profile-b,profile-a --period year
+stepview --profile foo,bar --period year
 ```
 
 <img src="https://public-assets-vincent-claes.s3.eu-west-1.amazonaws.com/stepview/stepview.gif" width="100%">
