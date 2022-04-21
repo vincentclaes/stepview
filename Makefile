@@ -6,4 +6,4 @@ setup:
 	poetry shell
 
 tests:
-	pytest
+	poetry run pytest
