@@ -31,6 +31,8 @@ multiple AWS profiles.
 - [Setup an AWS named profile](https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-profiles.html#cli-configure-profiles-create).
 - Choose a time period: `minute`, `hour`, `today`, `day`, `week`, `month`, `year`.
 
+> **NOTE** This is an alpha version, if you have a lot of statemachines/executions for your period it might crash because you reached the request limit for fetching data from stepfunctions. To solve it for now, use a smaller time period.
+
 ```
 stepview --profile foo,bar --period year
 ```
