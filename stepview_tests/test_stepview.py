@@ -8,6 +8,7 @@ import boto3
 import pendulum
 from dateutil.tz import tzutc
 from moto import mock_stepfunctions
+from moto import mock_cloudwatch
 from textual.app import App
 from typer.testing import CliRunner
 
@@ -72,16 +73,78 @@ def create_statemachine(name, profile):
 
     return client, role, state_machine
 
+def create_metric(name, profile, state_machine):
+
+    # point boto3 to our local credentials file
+    # using an env var.
+    os.environ["AWS_SHARED_CREDENTIALS_FILE"] = str(
+        Path(current_dir, "resources", "mock_credentials")
+    )
+
+    # # read our dummy statemachine definition
+    # with open(Path(current_dir, "resources", "sfn_definition.json")) as f:
+    #     sfn_definition = f.read()
+
+    # some dummy role
+    # role = "arn:aws:iam::012345678901:role/service-role/AmazonSageMaker-ExecutionRole-20191008T19082"
+
+    # check how to add MetricData from the documentation
+    # https://boto3.amazonaws.com/v1/documentation/api/latest/reference/services/cloudwatch.html#CloudWatch.Client.put_metric_data
+    # cloudwatch_resource = boto3.Session(profile_name=profile).resource("cloudwatch")
+    # cloudwatch_resource.Metric('AWS/States', 'ExecutionsSucceeded').put_data(
+    client = boto3.Session(profile_name=profile).client("cloudwatch")
+    client.put_metric_data(
+            Namespace='AWS/States',
+            MetricData=[
+                {
+                    'MetricName': 'ExecutionsSucceeded',
+                    'Dimensions': [{
+                        'Name': 'StateMachineArn',
+                        # 'Value': 'arn:aws:states:eu-central-1:077590795309:stateMachine:data-pipeline-simple-workflow'
+                        'Value': state_machine.get("stateMachineArn")
+                    }], 'StatisticValues': {
+                        'SampleCount': 1,
+                        'Sum': 1,
+                        'Minimum': 1,
+                        'Maximum': 1
+                    },
+                    'Timestamp': pendulum.now().subtract(hours=6),
+                    'Values': [1],
+                    'Value': 1
+                }
+            ]
+    )
+
+    # client.list_metrics(
+    #     Namespace='AWS/States',
+    #     MetricName='ExecutionsSucceeded',
+    #     Dimensions=[
+    #         {
+    #             'Name': 'StateMachineArn',
+    #             'Value': state_machine.get("stateMachineArn")
+    #         },
+    #     ],
+    #
+    # )
+    #
+    # state_machine = client.create_state_machine(
+    #     name=name, definition=sfn_definition, roleArn=role
+    # )
+
+    # return client, role, state_machine
 
 class TestStepView(unittest.TestCase):
+    @mock_cloudwatch
     @mock_stepfunctions
     @patch("stepview.data.list_executions_for_state_machine")
     def test_get_stepfunctions_status_happy_flow(self, m_list_executions):
 
-        create_statemachine("sm1", "profile1")
-        create_statemachine("sm2", "profile1")
-        create_statemachine("sm3", "profile1")
-        create_statemachine("sm1", "profile2")
+        client, role, state_machine = create_statemachine("sm1", "profile1")
+        create_metric("", profile="profile1", state_machine=state_machine)
+
+        # create_statemachine("sm2", "profile1")
+        # create_statemachine("sm3", "profile1")
+        # create_statemachine("sm1", "profile2")
 
         m_list_executions.side_effect = [
             list_executions(["RUNNING", "FAILED", "SUCCEEDED", "SUCCEEDED"]),
@@ -91,7 +154,8 @@ class TestStepView(unittest.TestCase):
         ]
         self.exception_ = None
         try:
-            stepview.data.main(aws_profiles=["profile1", "profile2"], period="day")
+            # stepview.data.main(aws_profiles=["profile1", "profile2"], period="day")
+            stepview.data.main(aws_profiles=["profile1",], period="day")
         except Exception as e:
             self.exception_ = e
 

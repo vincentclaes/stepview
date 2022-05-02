@@ -2,7 +2,7 @@ from typing import List
 
 import typer
 
-from stepview.data import PERIODS_LIST
+from stepview.data import PERIODS_LIST, DAY
 from stepview.tui import StepViewTUI
 
 app = typer.Typer()
@@ -27,13 +27,13 @@ def parse_string_to_list(profiles: str) -> list:
 @app.command()
 def stepview(
     profile: List[str] = typer.Option(
-        ...,
+        default=["default"],
         callback=parse_string_to_list,
         help="specify the aws profile you want to use as a comma seperated string. "
         "For example '--profile profile1,profile2,profile3,...'",
     ),
     period: str = typer.Option(
-        "day",
+        default="day",
         help="specify the time period for which you wish to look back. "
         f"""You can choose from the values: {', '.join(PERIODS_LIST.keys())}""",
     ),
