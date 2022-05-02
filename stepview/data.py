@@ -17,6 +17,9 @@ class States:
     succeeded_perc: str
     failed: str
     running: str
+    aborted: str
+    timed_out: str
+    throttled: str
 
 
 @dataclass
@@ -54,14 +57,17 @@ PERIODS_LIST = {
 
 def main(aws_profiles: list, period: str):
     table = Table()
-    table.add_column("State Machine", justify="right")
+    table.add_column("StateMachine", justify="left", overflow="fold")
     table.add_column("Profile")
     table.add_column("Account")
     table.add_column("Region")
     table.add_column("Total")
     table.add_column("Succeed (%)")
-    table.add_column("Failed")
     table.add_column("Running")
+    table.add_column("Failed")
+    table.add_column("Aborted")
+    table.add_column("TimedOut")
+    table.add_column("Throttled")
     for profile_name in aws_profiles:
         sfn_client = boto3.Session(profile_name=profile_name).client("stepfunctions")
         cloudwatch_resource = boto3.Session(profile_name=profile_name).resource("cloudwatch")
@@ -97,8 +103,11 @@ def main(aws_profiles: list, period: str):
                     region,
                     f"{states.total_executions:,.0f}",
                     f"{states.succeeded_perc:,.2f}",
-                    f"{states.failed:,.0f}",
                     f"{states.running:,.0f}",
+                    f"{states.failed:,.0f}",
+                    f"{states.aborted:,.0f}",
+                    f"{states.timed_out:,.0f}",
+                    f"{states.throttled:,.0f}",
                 )
         else:
             logger.info(f"no statemachines found for profile {profile_name}")
@@ -208,6 +217,9 @@ def get_data_from_cloudwatch(cloudwatch_resource: object, state_machine_arn: str
         succeeded_perc=succeeded_perc,
         failed=failed,
         running=running,
+        aborted=aborted,
+        timed_out=timed_out,
+        throttled=throttled
     )
 
 #
