@@ -1,5 +1,6 @@
 import concurrent.futures
 import boto3
+import botocore.client
 import pendulum
 
 from rich.table import Table
@@ -59,6 +60,7 @@ class Time:
 
 
 NOW = pendulum.now()
+MAX_POOL_CONNECTIONS = 100
 
 PERIODS_MAPPING = {
     Time.MINUTE: Periods(NOW.subtract(minutes=1), NOW, "microseconds"),
@@ -140,9 +142,15 @@ def run_for_state_machine(
 
 
 def run_for_profile(profile_name: str, period: str) -> Table:
-    sfn_client = boto3.Session(profile_name=profile_name).client("stepfunctions")
+    sfn_client = boto3.Session(
+        profile_name=profile_name
+    ).client(
+        "stepfunctions",
+        config=botocore.client.Config(max_pool_connections=MAX_POOL_CONNECTIONS)
+    )
     cloudwatch_resource = boto3.Session(profile_name=profile_name).resource(
-        "cloudwatch"
+        "cloudwatch",
+        config=botocore.client.Config(max_pool_connections=MAX_POOL_CONNECTIONS)
     )
     state_machines = sfn_client.list_state_machines().get("stateMachines")
     if state_machines:
@@ -156,7 +164,7 @@ def run_for_profile(profile_name: str, period: str) -> Table:
             )
 
         with concurrent.futures.ThreadPoolExecutor(
-            min(len(state_machines), 100)
+            min(len(state_machines), MAX_POOL_CONNECTIONS)
         ) as thread:
             state_machine_generator = thread.map(_run_for_state_machine, state_machines)
         return state_machine_generator
