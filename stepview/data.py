@@ -1,18 +1,16 @@
-import asyncio
-from collections import defaultdict
-from dataclasses import dataclass
-
+import concurrent.futures
 import boto3
-import nest_asyncio
 import pendulum
-from rich.table import Table
 
+from rich.table import Table
+from dataclasses import dataclass
 from stepview import logger
 
 
 @dataclass
 class States:
     """States that we pass to the TUI table."""
+
     total_executions: int
     succeeded: str
     succeeded_perc: str
@@ -26,6 +24,7 @@ class States:
 @dataclass
 class Periods:
     """We use Periods class to get the datetime range."""
+
     start_date_of_period: pendulum.DateTime
     now: pendulum.DateTime
     granularity: str
@@ -40,6 +39,7 @@ class MetricNames:
     more info here:
     https://docs.aws.amazon.com/step-functions/latest/dg/procedure-cw-metrics.html#cloudwatch-step-functions-execution-metrics
     """
+
     EXECUTIONS_STARTED = "ExecutionsStarted"
     EXECUTIONS_SUCCEEDED = "ExecutionsSucceeded"
     EXECUTIONS_FAILED = "ExecutionsFailed"
@@ -71,7 +71,10 @@ PERIODS_MAPPING = {
 }
 
 
-async def main(aws_profiles: list, period: str):
+def main(aws_profiles: list, period: str):
+
+    profile_generator = run_all_profiles(aws_profiles=aws_profiles, period=period)
+
     table = Table()
     table.add_column("StateMachine", justify="left", overflow="fold")
     table.add_column("Profile")
@@ -84,112 +87,91 @@ async def main(aws_profiles: list, period: str):
     table.add_column("Aborted")
     table.add_column("TimedOut")
     table.add_column("Throttled")
-    rows = await run_all_profiles(
-        aws_profiles=aws_profiles,
-        period=period
-    )
-    await rows
-    for row in rows:
-        if row:
-            table.add_row(*row)
+
+    for profile in profile_generator:
+        for row in profile:
+            if row:
+                table.add_row(*row)
+
     return table
 
 
-async def run_all_profiles(aws_profiles: list, period: str):
-    # nest_asyncio.apply()
-    # loop = asyncio.get_event_loop()
-    # results = await [
-    #     run_for_profile(profile_name=profile_name, period=period) for profile_name in aws_profiles
-    # ]
-    results = run_for_profile(profile_name=aws_profiles[0], period=period)
-    await asyncio.gather(results)
-    # tasks = func_normal(), func_infinite()
-    # done, _ = loop.run_until_complete(
-    #     asyncio.gather(*results)
-    # )
-    # _
-    # results = await asyncio.gather(*[x(i) for i in range(10)])
-    # loop = asyncio.get_event_loop()
-    # loop.run_until_complete(
-    #     asyncio.gather(*[
-    #         run_for_profile(profile_name=profile_name, period=period)
-    #         for profile_name in aws_profiles]
-    #                    )
-    # )
-    # results = await asyncio.gather(*[
-    #     run_for_profile(profile_name=profile_name, period=period)
-    #                                  for profile_name in aws_profiles]
-    # )
-    return results
-    # pass
+def run_all_profiles(aws_profiles: list, period: str):
+    def _run_for_profile(aws_profile: str):
+        return run_for_profile(profile_name=aws_profile, period=period)
+
+    with concurrent.futures.ThreadPoolExecutor(len(aws_profiles)) as thread:
+        profile_generator = thread.map(_run_for_profile, aws_profiles)
+
+    return profile_generator
 
 
-async def run_for_profile(profile_name: str, period: str) -> Table:
+def run_for_state_machine(
+    state_machine: object, cloudwatch_resource: object, profile_name: str, period: str
+):
+    state_machine_arn = state_machine.get("stateMachineArn")
+    states = get_data_from_cloudwatch(
+        cloudwatch_resource=cloudwatch_resource,
+        state_machine_arn=state_machine_arn,
+        period=period,
+    )
+    arn_parsed = parse_aws_arn(state_machine_arn)
+    account = arn_parsed.get("account")
+    region = arn_parsed.get("region")
+    state_machine_name = state_machine.get("name")
+    state_machine_url = get_statemachine_url(
+        state_machine_arn=state_machine_arn, region=region
+    )
+    state_machine_name_url = f"[link={state_machine_url}]{state_machine_name}[/link]"
+    return_object = (
+        state_machine_name_url,
+        profile_name,
+        account,
+        region,
+        f"{states.total_executions:,.0f}",
+        f"{states.succeeded_perc:,.2f}",
+        f"{states.running:,.0f}",
+        f"{states.failed:,.0f}",
+        f"{states.aborted:,.0f}",
+        f"{states.timed_out:,.0f}",
+        f"{states.throttled:,.0f}",
+    )
+    return return_object
+
+
+def run_for_profile(profile_name: str, period: str) -> Table:
     sfn_client = boto3.Session(profile_name=profile_name).client("stepfunctions")
     cloudwatch_resource = boto3.Session(profile_name=profile_name).resource(
         "cloudwatch"
     )
     state_machines = sfn_client.list_state_machines().get("stateMachines")
     if state_machines:
-        for state_machine in state_machines:
-            state_machine_arn = state_machine.get("stateMachineArn")
-            states = get_data_from_cloudwatch(
+
+        def _run_for_state_machine(state_machine):
+            return run_for_state_machine(
+                state_machine=state_machine,
                 cloudwatch_resource=cloudwatch_resource,
-                state_machine_arn=state_machine_arn,
+                profile_name=profile_name,
                 period=period,
             )
-            arn_parsed = parse_aws_arn(state_machine_arn)
-            account = arn_parsed.get("account")
-            region = arn_parsed.get("region")
-            state_machine_name = state_machine.get("name")
-            state_machine_url = get_statemachine_url(
-                state_machine_arn=state_machine_arn, region=region
-            )
-            state_machine_name_url = (
-                f"[link={state_machine_url}]{state_machine_name}[/link]"
-            )
-            # table.add_row(
-            #     state_machine_name_url,
-            #     profile_name,
-            #     account,
-            #     region,
-            #     f"{states.total_executions:,.0f}",
-            #     f"{states.succeeded_perc:,.2f}",
-            #     f"{states.running:,.0f}",
-            #     f"{states.failed:,.0f}",
-            #     f"{states.aborted:,.0f}",
-            #     f"{states.timed_out:,.0f}",
-            #     f"{states.throttled:,.0f}",
-            # )
-            return_object = (
-                state_machine_name_url,
-                profile_name,
-                account,
-                region,
-                f"{states.total_executions:,.0f}",
-                f"{states.succeeded_perc:,.2f}",
-                f"{states.running:,.0f}",
-                f"{states.failed:,.0f}",
-                f"{states.aborted:,.0f}",
-                f"{states.timed_out:,.0f}",
-                f"{states.throttled:,.0f}",
-            )
-            return return_object
-            # return "bam"
+
+        with concurrent.futures.ThreadPoolExecutor(
+            min(len(state_machines), 100)
+        ) as thread:
+            state_machine_generator = thread.map(_run_for_state_machine, state_machines)
+        return state_machine_generator
     else:
         logger.info(f"no statemachines found for profile {profile_name}")
         return ()
 
 
 def call_metric_endpoint(
-        metric_name, cloudwatch_resource, state_machine_arn, period_object
+    metric_name, cloudwatch_resource, state_machine_arn, period_object
 ):
     """
     https://boto3.amazonaws.com/v1/documentation/api/latest/reference/services/cloudwatch.html#metric
     """
-    metric = cloudwatch_resource \
-        .Metric("AWS/States", metric_name) \
-        .get_statistics(
+    metric = cloudwatch_resource.Metric("AWS/States", metric_name).get_statistics(
         Dimensions=[
             {
                 "Name": "StateMachineArn",
@@ -208,7 +190,7 @@ def call_metric_endpoint(
 
 
 def get_data_from_cloudwatch(
-        cloudwatch_resource: object, state_machine_arn: str, period: str
+    cloudwatch_resource: object, state_machine_arn: str, period: str
 ) -> States:
     """
     check the docs for more info
@@ -226,47 +208,31 @@ def get_data_from_cloudwatch(
     """
 
     period_object = get_period_objects(period=period)
-    started = call_metric_endpoint(
-        metric_name="ExecutionsStarted",
-        cloudwatch_resource=cloudwatch_resource,
-        state_machine_arn=state_machine_arn,
-        period_object=period_object,
-    )
-    succeeded = call_metric_endpoint(
-        metric_name="ExecutionsSucceeded",
-        cloudwatch_resource=cloudwatch_resource,
-        state_machine_arn=state_machine_arn,
-        period_object=period_object,
-    )
-    failed = call_metric_endpoint(
-        metric_name="ExecutionsFailed",
-        cloudwatch_resource=cloudwatch_resource,
-        state_machine_arn=state_machine_arn,
-        period_object=period_object,
-    )
 
-    aborted = call_metric_endpoint(
-        metric_name="ExecutionsAborted",
-        cloudwatch_resource=cloudwatch_resource,
-        state_machine_arn=state_machine_arn,
-        period_object=period_object,
-    )
-    timed_out = call_metric_endpoint(
-        metric_name="ExecutionsTimedOut",
-        cloudwatch_resource=cloudwatch_resource,
-        state_machine_arn=state_machine_arn,
-        period_object=period_object,
-    )
+    def _call_metric_endpoint(metric_name):
+        return call_metric_endpoint(
+            metric_name=metric_name,
+            cloudwatch_resource=cloudwatch_resource,
+            state_machine_arn=state_machine_arn,
+            period_object=period_object,
+        )
 
-    throttled = call_metric_endpoint(
-        metric_name="ExecutionThrottled",
-        cloudwatch_resource=cloudwatch_resource,
-        state_machine_arn=state_machine_arn,
-        period_object=period_object,
-    )
+    metrics = [
+        "ExecutionsStarted",
+        "ExecutionsSucceeded",
+        "ExecutionsFailed",
+        "ExecutionsAborted",
+        "ExecutionsTimedOut",
+        "ExecutionThrottled",
+    ]
+
+    with concurrent.futures.ThreadPoolExecutor(len(metrics)) as thread:
+        started, succeeded, failed, aborted, timed_out, throttled = list(
+            thread.map(_call_metric_endpoint, metrics)
+        )
 
     running = started - succeeded - failed - aborted - timed_out - throttled
-    # running = 0
+
     succeeded_perc = (succeeded / started) * 100 if started > 0 else 0
 
     return States(

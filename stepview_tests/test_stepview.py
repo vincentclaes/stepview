@@ -52,6 +52,7 @@ current_dir = Path(__file__).resolve().parent
 #     }
 #
 
+
 def create_statemachine(name, profile):
 
     # point boto3 to our local credentials file
@@ -91,37 +92,43 @@ def create_metric(metric_name, profile, state_machine):
 
     client = boto3.Session(profile_name=profile).client("cloudwatch")
     client.put_metric_data(
-            Namespace='AWS/States',
-            MetricData=[
-                {
-                    'MetricName': metric_name,
-                    'Dimensions': [{
-                        'Name': 'StateMachineArn',
-                        'Value': state_machine.get("stateMachineArn")
-                    }], 'StatisticValues': {
-                        'SampleCount': 1,
-                        'Sum': 1,
-                        'Minimum': 1,
-                        'Maximum': 1
-                    },
-                    # we substract 1 minute so that we are sure we are
-                    # before the init of NOW in data module.
-                    'Timestamp': NOW.subtract(minutes=1),
-                    'Values': [1],
-                    'Value': 1
-                }
-            ]
+        Namespace="AWS/States",
+        MetricData=[
+            {
+                "MetricName": metric_name,
+                "Dimensions": [
+                    {
+                        "Name": "StateMachineArn",
+                        "Value": state_machine.get("stateMachineArn"),
+                    }
+                ],
+                "StatisticValues": {
+                    "SampleCount": 1,
+                    "Sum": 1,
+                    "Minimum": 1,
+                    "Maximum": 1,
+                },
+                # we substract 1 minute so that we are sure we are
+                # before the init of NOW in data module.
+                "Timestamp": NOW.subtract(minutes=1),
+                "Values": [1],
+                "Value": 1,
+            }
+        ],
     )
 
 
 class TestStepView(unittest.TestCase):
-
     @mock_cloudwatch
     @mock_stepfunctions
     def test_get_stepfunctions_status_happy_flow(self):
 
         client, role, state_machine = create_statemachine("sm1", "profile1")
-        create_metric(MetricNames.EXECUTIONS_SUCCEEDED, profile="profile1", state_machine=state_machine)
+        create_metric(
+            MetricNames.EXECUTIONS_SUCCEEDED,
+            profile="profile1",
+            state_machine=state_machine,
+        )
 
         self.exception_ = None
         try:
