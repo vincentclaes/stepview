@@ -2,7 +2,7 @@ from typing import List
 
 import typer
 
-from stepview.data import PERIODS_LIST, DAY
+from stepview.data import PERIODS_MAPPING, Time
 from stepview.tui import StepViewTUI
 
 app = typer.Typer()
@@ -33,9 +33,9 @@ def stepview(
         "For example '--profile profile1,profile2,profile3,...'",
     ),
     period: str = typer.Option(
-        default="day",
+        default=Time.DAY,
         help="specify the time period for which you wish to look back. "
-        f"""You can choose from the values: {', '.join(PERIODS_LIST.keys())}""",
+        f"""You can choose from the values: {', '.join(PERIODS_MAPPING.keys())}""",
     ),
 ):
     StepViewTUI.run(
