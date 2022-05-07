@@ -1,7 +1,9 @@
+import logging
 from typing import List
 
 import typer
 
+from stepview import set_logger_3rd_party_lib
 from stepview.data import PERIODS_MAPPING, Time
 from stepview.tui import StepViewTUI
 
@@ -37,7 +39,13 @@ def stepview(
         help="specify the time period for which you wish to look back. "
         f"""You can choose from the values: {', '.join(PERIODS_MAPPING.keys())}""",
     ),
+    verbose: bool = typer.Option(
+        False, "--verbose",
+        help="use --verbose to set verbose logging."),
+
 ):
+    if verbose:
+        set_logger_3rd_party_lib(logging_level=logging.DEBUG)
     StepViewTUI.run(
         title=f"STEPVIEW (period: {period})", aws_profiles=profile, period=period
     )

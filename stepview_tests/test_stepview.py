@@ -76,7 +76,7 @@ def create_statemachine(name, profile):
     return client, role, state_machine
 
 
-def create_metric(metric_name, profile, state_machine):
+def create_metric(metric_name, profile, state_machine, timestamp=NOW.subtract(minutes=1)):
     """
     Add a metric to cloudwatch
     check how to add MetricData from the documentation
@@ -92,7 +92,7 @@ def create_metric(metric_name, profile, state_machine):
 
     client = boto3.Session(profile_name=profile).client("cloudwatch")
     client.put_metric_data(
-        Namespace="AWS/States",
+        Namespace="AWS/State",
         MetricData=[
             {
                 "MetricName": metric_name,
@@ -110,7 +110,7 @@ def create_metric(metric_name, profile, state_machine):
                 },
                 # we substract 1 minute so that we are sure we are
                 # before the init of NOW in data module.
-                "Timestamp": NOW.subtract(minutes=1),
+                "Timestamp": timestamp,
                 "Values": [1],
                 "Value": 1,
             }
@@ -138,61 +138,38 @@ class TestStepView(unittest.TestCase):
 
         self.assertIsNone(self.exception_)
 
+    @mock_cloudwatch
     @mock_stepfunctions
-    @patch("stepview.data.list_executions_for_state_machine")
-    def test_get_stepfunctions_with_next_token(self, m_list_executions):
+    def test_stepview_on_time_period_minute(self):
+        sfn_client, role, state_machine = create_statemachine("sm1", "profile1")
 
-        sfn_client, role, statemachine = create_statemachine("sm1", "profile1")
-
-        m_list_executions.side_effect = [
-            {
-                # we add a token so that we call the function
-                # list_executions_for_state_machine two times.
-                "nextToken": "some-token",
-                **list_executions(["RUNNING", "FAILED", "SUCCEEDED", "SUCCEEDED"]),
-            },
-            list_executions(["RUNNING", "FAILED", "SUCCEEDED", "SUCCEEDED"]),
-        ]
-        self.exception_ = None
-        try:
-            states = stepview.data.get_all_states_of_executions(
-                sfn_client=sfn_client,
-                state_machine_arn=statemachine.get("stateMachineArn"),
-                period="day",
-            )
-
-        except Exception as e:
-            self.exception_ = e
-
-        self.assertIsNone(self.exception_)
-        self.assertEqual(m_list_executions.call_count, 2)
-        self.assertEqual(states.failed, 2)
-        self.assertEqual(states.running, 2)
-        self.assertEqual(states.succeeded, 4)
-        self.assertEqual(states.succeeded_perc, 50.0)
-        self.assertEqual(states.total_executions, 8)
-
-    @mock_stepfunctions
-    @patch("stepview.data.list_executions_for_state_machine")
-    def test_stepview_on_time_period_minute(self, m_list_executions):
-        sfn_client, role, statemachine = create_statemachine("sm1", "profile1")
-
-        last_minute = datetime.datetime.fromisoformat(
+        time_started = datetime.datetime.fromisoformat(
             pendulum.now().subtract(minutes=1, seconds=2).to_iso8601_string()
         )
-        m_list_executions.side_effect = [
-            {
-                "nextToken": "some-token",
-                **list_executions(["SUCCEEDED"]),
-            },
-            list_executions(["FAILED"], start_date=last_minute),
-        ]
-
-        states = stepview.data.get_all_states_of_executions(
-            sfn_client=sfn_client,
-            state_machine_arn=statemachine.get("stateMachineArn"),
-            period=stepview.data.MINUTE,
+        time_succeeded = datetime.datetime.fromisoformat(
+            pendulum.now().subtract(minutes=1, seconds=1).to_iso8601_string()
         )
+
+
+        create_metric(
+            MetricNames.EXECUTIONS_STARTED,
+            profile="profile1",
+            state_machine=state_machine,
+            timestamp=time_started
+        )
+        create_metric(
+            MetricNames.EXECUTIONS_SUCCEEDED,
+            profile="profile1",
+            state_machine=state_machine,
+            timestamp=time_succeeded
+        )
+        _, result = stepview.data.main(aws_profiles=["profile1"], period="day")
+
+        # states = stepview.data.get_all_states_of_executions(
+        #     sfn_client=sfn_client,
+        #     state_machine_arn=state_machine.get("stateMachineArn"),
+        #     period=stepview.data.MINUTE,
+        # )
 
         self.assertEqual(states.succeeded, 1)
         self.assertEqual(states.succeeded_perc, 100.0)
@@ -391,3 +368,6 @@ class TestStepViewCli(unittest.TestCase):
             stepview.entrypoint.app, ["--profile", "profile1 profile2 profile3"]
         )
         self.assertEqual(result.exit_code, 0)
+
+    def test_verbose(self):
+        pass

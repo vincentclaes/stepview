@@ -1,16 +1,19 @@
 import concurrent.futures
+import logging
+
 import boto3
 import botocore.client
 import pendulum
+from rich.progress import track, Progress, TextColumn, BarColumn
 
 from rich.table import Table
 from dataclasses import dataclass
-from stepview import logger
+from stepview import logger, set_logger_3rd_party_lib
 
 
 @dataclass
-class States:
-    """States that we pass to the TUI table."""
+class State:
+    """State that we pass to the TUI table."""
 
     total_executions: int
     succeeded: str
@@ -20,6 +23,30 @@ class States:
     aborted: str
     timed_out: str
     throttled: str
+
+@dataclass
+class Row:
+    state_machine: str
+    profile_name: str
+    account: str
+    region:  str
+    state: State
+
+    def get_values(self):
+        return (
+            self.state_machine,
+            self.profile_name,
+            self.account,
+            self.region,
+            f"{self.state.total_executions:,.0f}",
+            f"{self.state.succeeded_perc:,.2f}",
+            f"{self.state.running:,.0f}",
+            f"{self.state.failed:,.0f}",
+            f"{self.state.aborted:,.0f}",
+            f"{self.state.timed_out:,.0f}",
+            f"{self.state.throttled}"
+
+        )
 
 
 @dataclass
@@ -75,7 +102,10 @@ PERIODS_MAPPING = {
 
 def main(aws_profiles: list, period: str):
 
-    profile_generator = run_all_profiles(aws_profiles=aws_profiles, period=period)
+    progress_viz = (TextColumn("[progress.description]{task.description}"), BarColumn())
+    with Progress(*progress_viz) as progress:
+        progress.add_task("[green]Getting Data...", start=False)
+        profile_generator = run_all_profiles(aws_profiles=aws_profiles, period=period)
 
     table = Table()
     table.add_column("StateMachine", justify="left", overflow="fold")
@@ -90,12 +120,15 @@ def main(aws_profiles: list, period: str):
     table.add_column("TimedOut")
     table.add_column("Throttled")
 
+    all_rows = []
     for profile in profile_generator:
         for row in profile:
             if row:
-                table.add_row(*row)
+                table.add_row(*row.get_values())
+            all_rows.append(row)
 
-    return table
+    # return table for viz, return all_rows for tests
+    return table, all_rows
 
 
 def run_all_profiles(aws_profiles: list, period: str):
@@ -112,7 +145,7 @@ def run_for_state_machine(
     state_machine: object, cloudwatch_resource: object, profile_name: str, period: str
 ):
     state_machine_arn = state_machine.get("stateMachineArn")
-    states = get_data_from_cloudwatch(
+    state = get_data_from_cloudwatch(
         cloudwatch_resource=cloudwatch_resource,
         state_machine_arn=state_machine_arn,
         period=period,
@@ -124,24 +157,20 @@ def run_for_state_machine(
     state_machine_url = get_statemachine_url(
         state_machine_arn=state_machine_arn, region=region
     )
-    state_machine_name_url = f"[link={state_machine_url}]{state_machine_name}[/link]"
-    return_object = (
-        state_machine_name_url,
-        profile_name,
-        account,
-        region,
-        f"{states.total_executions:,.0f}",
-        f"{states.succeeded_perc:,.2f}",
-        f"{states.running:,.0f}",
-        f"{states.failed:,.0f}",
-        f"{states.aborted:,.0f}",
-        f"{states.timed_out:,.0f}",
-        f"{states.throttled:,.0f}",
+    state_machine_name_with_url = f"[link={state_machine_url}]{state_machine_name}[/link]"
+    row = Row(
+        state_machine=state_machine_name_with_url,
+        profile_name=profile_name,
+        account=account,
+        region=region,
+        state=state
+
     )
-    return return_object
+    return row
 
 
 def run_for_profile(profile_name: str, period: str) -> Table:
+
     sfn_client = boto3.Session(
         profile_name=profile_name
     ).client(
@@ -179,7 +208,7 @@ def call_metric_endpoint(
     """
     https://boto3.amazonaws.com/v1/documentation/api/latest/reference/services/cloudwatch.html#metric
     """
-    metric = cloudwatch_resource.Metric("AWS/States", metric_name).get_statistics(
+    metric = cloudwatch_resource.Metric("AWS/State", metric_name).get_statistics(
         Dimensions=[
             {
                 "Name": "StateMachineArn",
@@ -199,7 +228,7 @@ def call_metric_endpoint(
 
 def get_data_from_cloudwatch(
     cloudwatch_resource: object, state_machine_arn: str, period: str
-) -> States:
+) -> State:
     """
     check the docs for more info
     https://docs.aws.amazon.com/step-functions/latest/dg/procedure-cw-metrics.html
@@ -243,7 +272,7 @@ def get_data_from_cloudwatch(
 
     succeeded_perc = (succeeded / started) * 100 if started > 0 else 0
 
-    return States(
+    return State(
         total_executions=started,
         succeeded=succeeded,
         succeeded_perc=succeeded_perc,

@@ -31,7 +31,7 @@ class StepViewTUI(App):
         await self.view.dock(body, edge="right")
 
         async def get_stepfunction_data():
-            table = main(aws_profiles=self.aws_profiles, period=self.period)
+            table, _ = main(aws_profiles=self.aws_profiles, period=self.period)
             await body.update(table)
 
         await self.call_later(get_stepfunction_data)
