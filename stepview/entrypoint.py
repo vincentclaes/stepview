@@ -1,8 +1,10 @@
+import logging
 from typing import List
 
 import typer
 
-from stepview.data import PERIODS_LIST
+from stepview import set_logger_3rd_party_lib
+from stepview.data import Time
 from stepview.tui import StepViewTUI
 
 app = typer.Typer()
@@ -27,17 +29,23 @@ def parse_string_to_list(profiles: str) -> list:
 @app.command()
 def stepview(
     profile: List[str] = typer.Option(
-        ...,
+        default=["default"],
         callback=parse_string_to_list,
         help="specify the aws profile you want to use as a comma seperated string. "
         "For example '--profile profile1,profile2,profile3,...'",
     ),
     period: str = typer.Option(
-        "day",
+        default=Time.DAY,
         help="specify the time period for which you wish to look back. "
-        f"""You can choose from the values: {', '.join(PERIODS_LIST.keys())}""",
+        f"""You can choose from the values: {', '.join(Time.get_time_variables())}""",
     ),
+    verbose: bool = typer.Option(
+        False, "--verbose",
+        help="use --verbose to set verbose logging."),
+
 ):
+    if verbose:
+        set_logger_3rd_party_lib(logging_level=logging.DEBUG)
     StepViewTUI.run(
         title=f"STEPVIEW (period: {period})", aws_profiles=profile, period=period
     )

@@ -1,170 +1,303 @@
-from collections import defaultdict
-from dataclasses import dataclass
+import concurrent.futures
 
 import boto3
+import botocore.client
 import pendulum
-from rich.table import Table
+from rich.progress import track, Progress, TextColumn, BarColumn
 
+from rich.table import Table
+from dataclasses import dataclass
 from stepview import logger
 
 
 @dataclass
-class States:
-    """States that we pass to the TUI table."""
+class State:
+    """State that we pass to the TUI table."""
 
     total_executions: int
     succeeded: str
     succeeded_perc: str
     failed: str
     running: str
+    aborted: str
+    timed_out: str
+    throttled: str
+
+
+@dataclass
+class Row:
+    state_machine: str
+    profile_name: str
+    account: str
+    region: str
+    state: State
+
+    def get_values(self):
+        return (
+            self.state_machine,
+            self.profile_name,
+            self.account,
+            self.region,
+            f"{self.state.total_executions:,.0f}",
+            f"{self.state.succeeded_perc:,.2f}",
+            f"{self.state.running:,.0f}",
+            f"{self.state.failed:,.0f}",
+            f"{self.state.aborted:,.0f}",
+            f"{self.state.timed_out:,.0f}",
+            f"{self.state.throttled}"
+
+        )
 
 
 @dataclass
 class Periods:
-    """periods object."""
+    """We use Periods class to get the datetime range
+    for collecting the metrics."""
 
     start_date_of_period: pendulum.DateTime
+    now: pendulum.DateTime
     granularity: str
 
+    def get_difference_in_seconds(self):
+        return (self.now - self.start_date_of_period).in_seconds()
 
-MINUTE = "minute"
-HOUR = "hour"
-TODAY = "today"
-DAY = "day"
-WEEK = "week"
-MONTH = "month"
-YEAR = "year"
 
-PERIODS_LIST = {
-    MINUTE: Periods(pendulum.now().subtract(minutes=1), "microseconds"),
-    HOUR: Periods(pendulum.now().subtract(hours=1), "seconds"),
-    TODAY: Periods(pendulum.now().start_of("day"), "seconds"),
-    DAY: Periods(pendulum.now().subtract(days=1), "seconds"),
-    WEEK: Periods(pendulum.now().subtract(weeks=1), "hours"),
-    MONTH: Periods(pendulum.now().subtract(months=1), "hours"),
-    YEAR: Periods(pendulum.now().subtract(years=1), "hours"),
-}
+class MetricNames:
+    """
+    Metric names we can fetch from cloudwatch.
+    more info here:
+    https://docs.aws.amazon.com/step-functions/latest/dg/procedure-cw-metrics.html#cloudwatch-step-functions-execution-metrics
+    """
+
+    EXECUTIONS_STARTED = "ExecutionsStarted"
+    EXECUTIONS_SUCCEEDED = "ExecutionsSucceeded"
+    EXECUTIONS_FAILED = "ExecutionsFailed"
+    EXECUTIONS_ABORTED = "ExecutionsAborted"
+    EXECUTIONS_TIMED_OUT = "ExecutionsTimedOut"
+    EXECUTION_THROTTLED = "ExecutionThrottled"
+
+
+class Time:
+    MINUTE = "minute"
+    HOUR = "hour"
+    TODAY = "today"
+    DAY = "day"
+    WEEK = "week"
+    MONTH = "month"
+    YEAR = "year"
+
+    @classmethod
+    def get_time_variables(cls):
+        return [v for k, v in cls.__dict__.items()
+                if not k.startswith("__")
+                and not k.endswith('__')
+                and not "method" in str(v)
+                and not "function" in str(v)]
+
+
+NOW = pendulum.now()
+MAX_POOL_CONNECTIONS = 10
 
 
 def main(aws_profiles: list, period: str):
+    period = get_period_objects(period=period)
+
+    progress_viz = (TextColumn("[progress.description]{task.description}"), BarColumn())
+    with Progress(*progress_viz) as progress:
+        progress.add_task("[green]Getting Data...", start=False)
+        profile_generator = run_all_profiles(aws_profiles=aws_profiles, period=period)
+
     table = Table()
-    table.add_column("State Machine", justify="right")
+    table.add_column("StateMachine", justify="left", overflow="fold")
     table.add_column("Profile")
     table.add_column("Account")
     table.add_column("Region")
     table.add_column("Total")
     table.add_column("Succeed (%)")
-    table.add_column("Failure (absolute)")
-    table.add_column("Running (absolute)")
-    for profile_name in aws_profiles:
-        sfn_client = boto3.Session(profile_name=profile_name).client("stepfunctions")
-        state_machines = sfn_client.list_state_machines().get("stateMachines")
-        if state_machines:
-            for state_machine in state_machines:
-                state_machine_arn = state_machine.get("stateMachineArn")
-                states = get_all_states_of_executions(
-                    sfn_client=sfn_client,
-                    state_machine_arn=state_machine_arn,
-                    period=period,
-                )
-                arn_parsed = parse_aws_arn(state_machine_arn)
-                account = arn_parsed.get("account")
-                region = arn_parsed.get("region")
-                state_machine_name = state_machine.get("name")
-                state_machine_url = get_statemachine_url(
-                    state_machine_arn=state_machine_arn, region=region
-                )
-                state_machine_name_url = (
-                    f"[link={state_machine_url}]{state_machine_name}[/link]"
-                )
-                table.add_row(
-                    state_machine_name_url,
-                    profile_name,
-                    account,
-                    region,
-                    f"{states.total_executions}",
-                    f"{states.succeeded_perc}",
-                    f"{states.failed}",
-                    f"{states.running}",
-                )
-        else:
-            logger.info(f"no statemachines found for profile {profile_name}")
-    return table
+    table.add_column("Running")
+    table.add_column("Failed")
+    table.add_column("Aborted")
+    table.add_column("TimedOut")
+    table.add_column("Throttled")
+
+    all_rows = []
+    for profile in profile_generator:
+        for row in profile:
+            if row:
+                table.add_row(*row.get_values())
+            all_rows.append(row)
+
+    # return table for viz, return all_rows for tests
+    return table, all_rows
 
 
-def get_all_states_of_executions(
-    sfn_client: object, state_machine_arn: str, period: str
-) -> States:
+def run_all_profiles(aws_profiles: list, period: Periods):
+    def _run_for_profile(aws_profile: str):
+        return run_for_profile(profile_name=aws_profile, period=period)
 
-    states = defaultdict(int)
-    period_object = get_period_objects(period=period)
-    states = get_executions_for_statemachine(
-        sfn_client=sfn_client,
+    with concurrent.futures.ThreadPoolExecutor(len(aws_profiles)) as thread:
+        profile_generator = thread.map(_run_for_profile, aws_profiles)
+
+    return profile_generator
+
+
+def run_for_state_machine(
+        state_machine: object, cloudwatch_resource: object, profile_name: str, period: Periods
+):
+    state_machine_arn = state_machine.get("stateMachineArn")
+    state = get_data_from_cloudwatch(
+        cloudwatch_resource=cloudwatch_resource,
         state_machine_arn=state_machine_arn,
-        states=states,
-        period_object=period_object,
+        period=period,
     )
-    total_executions = sum(states.values())
-    succeeded = states["SUCCEEDED"]
-    succeeded_perc = (succeeded / total_executions) * 100 if total_executions > 0 else 0
-    failed = states["FAILED"]
-    running = states["RUNNING"]
+    arn_parsed = parse_aws_arn(state_machine_arn)
+    account = arn_parsed.get("account")
+    region = arn_parsed.get("region")
+    state_machine_name = state_machine.get("name")
+    state_machine_url = get_statemachine_url(
+        state_machine_arn=state_machine_arn, region=region
+    )
+    state_machine_name_with_url = f"[link={state_machine_url}]{state_machine_name}[/link]"
+    row = Row(
+        state_machine=state_machine_name_with_url,
+        profile_name=profile_name,
+        account=account,
+        region=region,
+        state=state
 
-    return States(
-        total_executions=total_executions,
+    )
+    return row
+
+
+def run_for_profile(profile_name: str, period: Periods) -> Table:
+    sfn_client = boto3.Session(
+        profile_name=profile_name
+    ).client(
+        "stepfunctions",
+        config=botocore.client.Config(max_pool_connections=MAX_POOL_CONNECTIONS)
+    )
+    cloudwatch_resource = boto3.Session(profile_name=profile_name).resource(
+        "cloudwatch",
+        config=botocore.client.Config(max_pool_connections=MAX_POOL_CONNECTIONS)
+    )
+    state_machines = sfn_client.list_state_machines().get("stateMachines")
+    if state_machines:
+        def _run_for_state_machine(state_machine):
+            return run_for_state_machine(
+                state_machine=state_machine,
+                cloudwatch_resource=cloudwatch_resource,
+                profile_name=profile_name,
+                period=period,
+            )
+
+        with concurrent.futures.ThreadPoolExecutor(
+                min(len(state_machines), MAX_POOL_CONNECTIONS)
+        ) as thread:
+            state_machine_generator = thread.map(_run_for_state_machine, state_machines)
+        return state_machine_generator
+    else:
+        logger.info(f"no statemachines found for profile {profile_name}")
+        return ()
+
+
+def call_metric_endpoint(
+        metric_name: str, cloudwatch_resource: object, state_machine_arn: str, period_object: Periods
+):
+    """
+    https://boto3.amazonaws.com/v1/documentation/api/latest/reference/services/cloudwatch.html#metric
+    """
+    metric = cloudwatch_resource.Metric("AWS/States", metric_name).get_statistics(
+        Dimensions=[
+            {
+                "Name": "StateMachineArn",
+                "Value": state_machine_arn,
+            },
+        ],
+        StartTime=period_object.start_date_of_period,
+        EndTime=period_object.now,
+        Period=period_object.get_difference_in_seconds(),
+        Statistics=[
+            "Sum",
+        ],
+    )
+    sum_of_datapoints = sum([datapoint["Sum"] for datapoint in metric["Datapoints"]])
+    return sum_of_datapoints
+
+
+def get_data_from_cloudwatch(
+        cloudwatch_resource: object, state_machine_arn: str, period: Periods
+) -> State:
+    """
+    check the docs for more info
+    https://docs.aws.amazon.com/step-functions/latest/dg/procedure-cw-metrics.html
+
+    Parameters
+    ----------
+    cloudwatch_resource
+    state_machine_arn
+    period
+
+    Returns
+    -------
+
+    """
+
+    def _call_metric_endpoint(metric_name):
+        return call_metric_endpoint(
+            metric_name=metric_name,
+            cloudwatch_resource=cloudwatch_resource,
+            state_machine_arn=state_machine_arn,
+            period_object=period,
+        )
+
+    metrics = [
+        "ExecutionsStarted",
+        "ExecutionsSucceeded",
+        "ExecutionsFailed",
+        "ExecutionsAborted",
+        "ExecutionsTimedOut",
+        "ExecutionThrottled",
+    ]
+
+    with concurrent.futures.ThreadPoolExecutor(len(metrics)) as thread:
+        started, succeeded, failed, aborted, timed_out, throttled = list(
+            thread.map(_call_metric_endpoint, metrics)
+        )
+
+    running = started - succeeded - failed - aborted - timed_out - throttled
+
+    succeeded_perc = (succeeded / started) * 100 if started > 0 else 0
+
+    return State(
+        total_executions=started,
         succeeded=succeeded,
         succeeded_perc=succeeded_perc,
         failed=failed,
         running=running,
+        aborted=aborted,
+        timed_out=timed_out,
+        throttled=throttled,
     )
 
 
 def get_period_objects(period: str):
+    PERIODS_MAPPING = {
+        Time.MINUTE: Periods(NOW.subtract(minutes=1), NOW, "microseconds"),
+        Time.HOUR: Periods(NOW.subtract(hours=1), NOW, "seconds"),
+        Time.TODAY: Periods(NOW.start_of("day"), NOW, "seconds"),
+        Time.DAY: Periods(NOW.subtract(days=1), NOW, "seconds"),
+        Time.WEEK: Periods(NOW.subtract(weeks=1), NOW, "hours"),
+        Time.MONTH: Periods(NOW.subtract(months=1), NOW, "hours"),
+        Time.YEAR: Periods(NOW.subtract(years=1), NOW, "hours"),
+    }
 
     try:
-        period_object = PERIODS_LIST[period]
+        period_object = PERIODS_MAPPING[period]
     except KeyError as e:
         raise NameError(
-            f"We did not recognize the value {period}. Please choose from {PERIODS_LIST.keys()}"
+            f"We did not recognize the value {period}. Please choose from {PERIODS_MAPPING.keys()}"
         )
     return period_object
-
-
-def get_executions_for_statemachine(
-    sfn_client: object,
-    state_machine_arn: str,
-    states: defaultdict,
-    period_object: Periods,
-    nextToken: str = None,
-) -> defaultdict:
-    executions = list_executions_for_state_machine(
-        sfn_client=sfn_client, state_machine_arn=state_machine_arn, nextToken=nextToken
-    )
-    for execution in executions.get("executions"):
-        start_date = execution.get("startDate")
-        # get the difference between the start date of the period set by the user
-        # and the start date of the execution
-        pendulum_period = pendulum.period(
-            pendulum.instance(start_date), period_object.start_date_of_period
-        )
-        # based on  the period
-        period_difference = getattr(pendulum_period, period_object.granularity)
-        if period_difference <= 0:
-            states[execution["status"]] += 1
-        else:
-            logger.debug("we only want executions of the last day.")
-            continue
-    else:
-        logger.debug("for loop ended normally, checking if we have a next token.")
-        if executions.get("nextToken"):
-            states = get_executions_for_statemachine(
-                sfn_client=sfn_client,
-                state_machine_arn=state_machine_arn,
-                states=states,
-                period_object=period_object,
-                nextToken=executions.get("nextToken"),
-            )
-    return states
 
 
 def get_statemachine_url(state_machine_arn: str, region: str) -> str:
@@ -194,15 +327,3 @@ def parse_aws_arn(arn):
     elif ":" in result["resource"]:
         result["resource_type"], result["resource"] = result["resource"].split(":", 1)
     return result
-
-
-def list_executions_for_state_machine(
-    sfn_client: object, state_machine_arn: str, nextToken: str
-):
-    if nextToken is None:
-        executions = sfn_client.list_executions(stateMachineArn=state_machine_arn)
-    else:
-        executions = sfn_client.list_executions(
-            stateMachineArn=state_machine_arn, nextToken=nextToken
-        )
-    return executions
