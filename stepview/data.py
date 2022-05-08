@@ -1,5 +1,4 @@
 import concurrent.futures
-import logging
 
 import boto3
 import botocore.client
@@ -8,7 +7,7 @@ from rich.progress import track, Progress, TextColumn, BarColumn
 
 from rich.table import Table
 from dataclasses import dataclass
-from stepview import logger, set_logger_3rd_party_lib
+from stepview import logger
 
 
 @dataclass
@@ -51,7 +50,8 @@ class Row:
 
 @dataclass
 class Periods:
-    """We use Periods class to get the datetime range."""
+    """We use Periods class to get the datetime range
+    for collecting the metrics."""
 
     start_date_of_period: pendulum.DateTime
     now: pendulum.DateTime
@@ -85,22 +85,20 @@ class Time:
     MONTH = "month"
     YEAR = "year"
 
+    @classmethod
+    def get_time_variables(cls):
+        return [v for k, v in cls.__dict__.items()
+                if not k.startswith("__")
+                and not k.endswith('__')
+                and not "method" in str(v)
+                and not "function" in str(v)]
 
 NOW = pendulum.now()
 MAX_POOL_CONNECTIONS = 100
 
-PERIODS_MAPPING = {
-    Time.MINUTE: Periods(NOW.subtract(minutes=1), NOW, "microseconds"),
-    Time.HOUR: Periods(NOW.subtract(hours=1), NOW, "seconds"),
-    Time.TODAY: Periods(NOW.start_of("day"), NOW, "seconds"),
-    Time.DAY: Periods(NOW.subtract(days=1), NOW, "seconds"),
-    Time.WEEK: Periods(NOW.subtract(weeks=1), NOW, "hours"),
-    Time.MONTH: Periods(NOW.subtract(months=1), NOW, "hours"),
-    Time.YEAR: Periods(NOW.subtract(years=1), NOW, "hours"),
-}
-
-
 def main(aws_profiles: list, period: str):
+
+    period = get_period_objects(period=period)
 
     progress_viz = (TextColumn("[progress.description]{task.description}"), BarColumn())
     with Progress(*progress_viz) as progress:
@@ -131,7 +129,7 @@ def main(aws_profiles: list, period: str):
     return table, all_rows
 
 
-def run_all_profiles(aws_profiles: list, period: str):
+def run_all_profiles(aws_profiles: list, period: Periods):
     def _run_for_profile(aws_profile: str):
         return run_for_profile(profile_name=aws_profile, period=period)
 
@@ -142,7 +140,7 @@ def run_all_profiles(aws_profiles: list, period: str):
 
 
 def run_for_state_machine(
-    state_machine: object, cloudwatch_resource: object, profile_name: str, period: str
+    state_machine: object, cloudwatch_resource: object, profile_name: str, period: Periods
 ):
     state_machine_arn = state_machine.get("stateMachineArn")
     state = get_data_from_cloudwatch(
@@ -169,7 +167,7 @@ def run_for_state_machine(
     return row
 
 
-def run_for_profile(profile_name: str, period: str) -> Table:
+def run_for_profile(profile_name: str, period: Periods) -> Table:
 
     sfn_client = boto3.Session(
         profile_name=profile_name
@@ -203,7 +201,7 @@ def run_for_profile(profile_name: str, period: str) -> Table:
 
 
 def call_metric_endpoint(
-    metric_name, cloudwatch_resource, state_machine_arn, period_object
+    metric_name: str, cloudwatch_resource: object, state_machine_arn: str, period_object: Periods
 ):
     """
     https://boto3.amazonaws.com/v1/documentation/api/latest/reference/services/cloudwatch.html#metric
@@ -227,7 +225,7 @@ def call_metric_endpoint(
 
 
 def get_data_from_cloudwatch(
-    cloudwatch_resource: object, state_machine_arn: str, period: str
+    cloudwatch_resource: object, state_machine_arn: str, period: Periods
 ) -> State:
     """
     check the docs for more info
@@ -244,14 +242,13 @@ def get_data_from_cloudwatch(
 
     """
 
-    period_object = get_period_objects(period=period)
 
     def _call_metric_endpoint(metric_name):
         return call_metric_endpoint(
             metric_name=metric_name,
             cloudwatch_resource=cloudwatch_resource,
             state_machine_arn=state_machine_arn,
-            period_object=period_object,
+            period_object=period,
         )
 
     metrics = [
@@ -285,6 +282,16 @@ def get_data_from_cloudwatch(
 
 
 def get_period_objects(period: str):
+    PERIODS_MAPPING = {
+        Time.MINUTE: Periods(NOW.subtract(minutes=1), NOW, "microseconds"),
+        Time.HOUR: Periods(NOW.subtract(hours=1), NOW, "seconds"),
+        Time.TODAY: Periods(NOW.start_of("day"), NOW, "seconds"),
+        Time.DAY: Periods(NOW.subtract(days=1), NOW, "seconds"),
+        Time.WEEK: Periods(NOW.subtract(weeks=1), NOW, "hours"),
+        Time.MONTH: Periods(NOW.subtract(months=1), NOW, "hours"),
+        Time.YEAR: Periods(NOW.subtract(years=1), NOW, "hours"),
+    }
+
     try:
         period_object = PERIODS_MAPPING[period]
     except KeyError as e:

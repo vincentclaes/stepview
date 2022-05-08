@@ -4,7 +4,7 @@ from typing import List
 import typer
 
 from stepview import set_logger_3rd_party_lib
-from stepview.data import PERIODS_MAPPING, Time
+from stepview.data import Time
 from stepview.tui import StepViewTUI
 
 app = typer.Typer()
@@ -37,7 +37,7 @@ def stepview(
     period: str = typer.Option(
         default=Time.DAY,
         help="specify the time period for which you wish to look back. "
-        f"""You can choose from the values: {', '.join(PERIODS_MAPPING.keys())}""",
+        f"""You can choose from the values: {', '.join(Time.get_time_variables())}""",
     ),
     verbose: bool = typer.Option(
         False, "--verbose",
