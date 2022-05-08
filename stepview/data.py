@@ -23,12 +23,13 @@ class State:
     timed_out: str
     throttled: str
 
+
 @dataclass
 class Row:
     state_machine: str
     profile_name: str
     account: str
-    region:  str
+    region: str
     state: State
 
     def get_values(self):
@@ -93,11 +94,12 @@ class Time:
                 and not "method" in str(v)
                 and not "function" in str(v)]
 
+
 NOW = pendulum.now()
-MAX_POOL_CONNECTIONS = 100
+MAX_POOL_CONNECTIONS = 10
+
 
 def main(aws_profiles: list, period: str):
-
     period = get_period_objects(period=period)
 
     progress_viz = (TextColumn("[progress.description]{task.description}"), BarColumn())
@@ -140,7 +142,7 @@ def run_all_profiles(aws_profiles: list, period: Periods):
 
 
 def run_for_state_machine(
-    state_machine: object, cloudwatch_resource: object, profile_name: str, period: Periods
+        state_machine: object, cloudwatch_resource: object, profile_name: str, period: Periods
 ):
     state_machine_arn = state_machine.get("stateMachineArn")
     state = get_data_from_cloudwatch(
@@ -168,7 +170,6 @@ def run_for_state_machine(
 
 
 def run_for_profile(profile_name: str, period: Periods) -> Table:
-
     sfn_client = boto3.Session(
         profile_name=profile_name
     ).client(
@@ -181,7 +182,6 @@ def run_for_profile(profile_name: str, period: Periods) -> Table:
     )
     state_machines = sfn_client.list_state_machines().get("stateMachines")
     if state_machines:
-
         def _run_for_state_machine(state_machine):
             return run_for_state_machine(
                 state_machine=state_machine,
@@ -191,7 +191,7 @@ def run_for_profile(profile_name: str, period: Periods) -> Table:
             )
 
         with concurrent.futures.ThreadPoolExecutor(
-            min(len(state_machines), MAX_POOL_CONNECTIONS)
+                min(len(state_machines), MAX_POOL_CONNECTIONS)
         ) as thread:
             state_machine_generator = thread.map(_run_for_state_machine, state_machines)
         return state_machine_generator
@@ -201,12 +201,12 @@ def run_for_profile(profile_name: str, period: Periods) -> Table:
 
 
 def call_metric_endpoint(
-    metric_name: str, cloudwatch_resource: object, state_machine_arn: str, period_object: Periods
+        metric_name: str, cloudwatch_resource: object, state_machine_arn: str, period_object: Periods
 ):
     """
     https://boto3.amazonaws.com/v1/documentation/api/latest/reference/services/cloudwatch.html#metric
     """
-    metric = cloudwatch_resource.Metric("AWS/State", metric_name).get_statistics(
+    metric = cloudwatch_resource.Metric("AWS/States", metric_name).get_statistics(
         Dimensions=[
             {
                 "Name": "StateMachineArn",
@@ -225,7 +225,7 @@ def call_metric_endpoint(
 
 
 def get_data_from_cloudwatch(
-    cloudwatch_resource: object, state_machine_arn: str, period: Periods
+        cloudwatch_resource: object, state_machine_arn: str, period: Periods
 ) -> State:
     """
     check the docs for more info
@@ -241,7 +241,6 @@ def get_data_from_cloudwatch(
     -------
 
     """
-
 
     def _call_metric_endpoint(metric_name):
         return call_metric_endpoint(
