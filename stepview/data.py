@@ -1,13 +1,12 @@
-import concurrent.futures
-
 import boto3
 import botocore.client
 import pendulum
-from rich.progress import track, Progress, TextColumn, BarColumn
 
+from rich.progress import Progress, TextColumn, BarColumn
 from rich.table import Table
 from dataclasses import dataclass
 from stepview import logger
+from concurrent.futures import ThreadPoolExecutor
 
 
 @dataclass
@@ -40,11 +39,16 @@ class Row:
             self.region,
             f"{self.state.total_executions:,.0f}",
             f"{self.state.succeeded_perc:,.2f}",
-            f"{self.state.running:,.0f}",
-            f"{self.state.failed:,.0f}",
-            f"{self.state.aborted:,.0f}",
-            f"{self.state.timed_out:,.0f}",
-            f"{self.state.throttled}"
+            f"{self.state.running}",
+            f"{self.state.failed:,.0f}/"
+            f"{self.state.failed:,.0f}/"
+            f"{self.state.aborted:,.0f}/"
+            f"{self.state.timed_out:,.0f}/"
+            f"{self.state.throttled:,.0f}"
+            # f"{self.state.failed:,.0f}",
+            # f"{self.state.aborted:,.0f}",
+            # f"{self.state.timed_out:,.0f}",
+            # f"{self.state.throttled:,.0f}"
 
         )
 
@@ -109,16 +113,16 @@ def main(aws_profiles: list, period: str):
 
     table = Table()
     table.add_column("StateMachine", justify="left", overflow="fold")
-    table.add_column("Profile")
-    table.add_column("Account")
-    table.add_column("Region")
-    table.add_column("Total")
-    table.add_column("Succeed (%)")
-    table.add_column("Running")
-    table.add_column("Failed")
-    table.add_column("Aborted")
-    table.add_column("TimedOut")
-    table.add_column("Throttled")
+    table.add_column("Profile", overflow="fold")
+    table.add_column("Account", overflow="fold")
+    table.add_column("Region", overflow="fold")
+    table.add_column("Total", overflow="fold")
+    table.add_column("Succeed (%)", overflow="fold")
+    table.add_column("Running", overflow="fold")
+    table.add_column("Failed/Aborted/TimedOut/Throttled", overflow="fold")
+    # table.add_column("Aborted")
+    # table.add_column("TimedOut")
+    # table.add_column("Throttled")
 
     all_rows = []
     for profile in profile_generator:
@@ -135,18 +139,19 @@ def run_all_profiles(aws_profiles: list, period: Periods):
     def _run_for_profile(aws_profile: str):
         return run_for_profile(profile_name=aws_profile, period=period)
 
-    with concurrent.futures.ThreadPoolExecutor(len(aws_profiles)) as thread:
+    with ThreadPoolExecutor(len(aws_profiles)) as thread:
         profile_generator = thread.map(_run_for_profile, aws_profiles)
 
     return profile_generator
 
 
 def run_for_state_machine(
-        state_machine: object, cloudwatch_resource: object, profile_name: str, period: Periods
+        state_machine: object, cloudwatch_resource: object, sfn_client: object, profile_name: str, period: Periods
 ):
     state_machine_arn = state_machine.get("stateMachineArn")
-    state = get_data_from_cloudwatch(
+    state = get_sfn_data(
         cloudwatch_resource=cloudwatch_resource,
+        sfn_client=sfn_client,
         state_machine_arn=state_machine_arn,
         period=period,
     )
@@ -186,11 +191,12 @@ def run_for_profile(profile_name: str, period: Periods) -> Table:
             return run_for_state_machine(
                 state_machine=state_machine,
                 cloudwatch_resource=cloudwatch_resource,
+                sfn_client=sfn_client,
                 profile_name=profile_name,
                 period=period,
             )
 
-        with concurrent.futures.ThreadPoolExecutor(
+        with ThreadPoolExecutor(
                 min(len(state_machines), MAX_POOL_CONNECTIONS)
         ) as thread:
             state_machine_generator = thread.map(_run_for_state_machine, state_machines)
@@ -224,8 +230,8 @@ def call_metric_endpoint(
     return sum_of_datapoints
 
 
-def get_data_from_cloudwatch(
-        cloudwatch_resource: object, state_machine_arn: str, period: Periods
+def get_sfn_data(
+        cloudwatch_resource: object, sfn_client:object, state_machine_arn: str, period: Periods
 ) -> State:
     """
     check the docs for more info
@@ -259,12 +265,14 @@ def get_data_from_cloudwatch(
         "ExecutionThrottled",
     ]
 
-    with concurrent.futures.ThreadPoolExecutor(len(metrics)) as thread:
+    with ThreadPoolExecutor(len(metrics)) as thread:
         started, succeeded, failed, aborted, timed_out, throttled = list(
             thread.map(_call_metric_endpoint, metrics)
         )
 
-    running = started - succeeded - failed - aborted - timed_out - throttled
+    running = get_running_executions_for_state_machine(
+        sfn_client=sfn_client, state_machine_arn=state_machine_arn
+    )
 
     succeeded_perc = (succeeded / started) * 100 if started > 0 else 0
 
@@ -327,3 +335,17 @@ def parse_aws_arn(arn):
     elif ":" in result["resource"]:
         result["resource_type"], result["resource"] = result["resource"].split(":", 1)
     return result
+
+
+def get_running_executions_for_state_machine(
+    sfn_client: object, state_machine_arn: str
+):
+
+    executions = sfn_client.list_executions(
+        stateMachineArn=state_machine_arn,
+        statusFilter='RUNNING'
+    )
+    no_running = str(len(executions.get("executions")))
+    if executions.get("nextToken") is not None:
+        no_running = f"+{no_running}"
+    return no_running
