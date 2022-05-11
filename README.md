@@ -29,9 +29,6 @@ multiple AWS profiles.
                                 back. You can choose from the values: minute, hour,
                                 today, day, week, month, year  [default: day]
           --verbose             use --verbose to set verbose logging.
-          --install-completion  Install completion for the current shell.
-          --show-completion     Show completion for the current shell, to copy it or
-                                customize the installation.
           --help                Show this message and exit.
 
 
