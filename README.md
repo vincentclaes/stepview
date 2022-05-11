@@ -25,10 +25,13 @@ multiple AWS profiles.
           --profile TEXT        specify the aws profile you want to use as a comma
                                 seperated string. For example '--profile
                                 profile1,profile2,profile3,...'  [default: default]
+                                
           --period TEXT         specify the time period for which you wish to look
                                 back. You can choose from the values: minute, hour,
                                 today, day, week, month, year  [default: day]
+                                
           --verbose             use --verbose to set verbose logging.
+          
           --help                Show this message and exit.
 
 
