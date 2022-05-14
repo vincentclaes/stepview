@@ -88,7 +88,6 @@ async def main(aws_profiles: list, period: str):
         aws_profiles=aws_profiles,
         period=period
     )
-    await rows
     for row in rows:
         if row:
             table.add_row(*row)
@@ -101,8 +100,8 @@ async def run_all_profiles(aws_profiles: list, period: str):
     # results = await [
     #     run_for_profile(profile_name=profile_name, period=period) for profile_name in aws_profiles
     # ]
-    results = run_for_profile(profile_name=aws_profiles[0], period=period)
-    await asyncio.gather(results)
+    coros = [run_for_profile(profile_name=aws_profile, period=period) for aws_profile in aws_profiles ]
+    results = await asyncio.gather(*coros)
     # tasks = func_normal(), func_infinite()
     # done, _ = loop.run_until_complete(
     #     asyncio.gather(*results)
