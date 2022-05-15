@@ -1,7 +1,6 @@
 # StepView
 
-Visualize a summary of all your stepfunctions in the terminal for
-multiple AWS profiles.
+Visualize a summary of all your AWS Stepfunctions in the terminal over different accounts, over different regions.
 
 ![stepview](./assets/stepview.png)
 
