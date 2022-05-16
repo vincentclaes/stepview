@@ -1,3 +1,5 @@
+import asyncio
+
 import boto3
 import botocore.client
 import pendulum
@@ -103,13 +105,16 @@ NOW = pendulum.now()
 MAX_POOL_CONNECTIONS = 10
 
 
-def main(aws_profiles: list, period: str):
+async def main(aws_profiles: list, period: str):
     period = get_period_objects(period=period)
-
+    all_profile_data = []
     progress_viz = (TextColumn("[progress.description]{task.description}"), BarColumn())
     with Progress(*progress_viz) as progress:
-        progress.add_task("[green]Getting Data...", start=False)
-        profile_generator = run_all_profiles(aws_profiles=aws_profiles, period=period)
+        # profile_generator = run_all_profiles(aws_profiles=aws_profiles, period=period)
+        for aws_profile in aws_profiles:
+            progress.add_task(f"[green]Getting Data for profile {aws_profile}...", start=False)
+            profile_data = await run_for_profile(profile_name=aws_profile, period=period)
+            all_profile_data.append(profile_data)
 
     table = Table()
     table.add_column("StateMachine", justify="left", overflow="fold")
@@ -120,12 +125,9 @@ def main(aws_profiles: list, period: str):
     table.add_column("Succeed (%)", overflow="fold")
     table.add_column("Running", overflow="fold")
     table.add_column("Failed/Aborted/TimedOut/Throttled", overflow="fold")
-    # table.add_column("Aborted")
-    # table.add_column("TimedOut")
-    # table.add_column("Throttled")
 
     all_rows = []
-    for profile in profile_generator:
+    for profile in all_profile_data:
         for row in profile:
             if row:
                 table.add_row(*row.get_values())
@@ -134,22 +136,11 @@ def main(aws_profiles: list, period: str):
     # return table for viz, return all_rows for tests
     return table, all_rows
 
-
-def run_all_profiles(aws_profiles: list, period: Periods):
-    def _run_for_profile(aws_profile: str):
-        return run_for_profile(profile_name=aws_profile, period=period)
-
-    with ThreadPoolExecutor(len(aws_profiles)) as thread:
-        profile_generator = thread.map(_run_for_profile, aws_profiles)
-
-    return profile_generator
-
-
-def run_for_state_machine(
+async def run_for_state_machine(
         state_machine: object, cloudwatch_resource: object, sfn_client: object, profile_name: str, period: Periods
 ):
     state_machine_arn = state_machine.get("stateMachineArn")
-    state = get_sfn_data(
+    state = await get_sfn_data(
         cloudwatch_resource=cloudwatch_resource,
         sfn_client=sfn_client,
         state_machine_arn=state_machine_arn,
@@ -174,7 +165,7 @@ def run_for_state_machine(
     return row
 
 
-def run_for_profile(profile_name: str, period: Periods) -> Table:
+async def run_for_profile(profile_name: str, period: Periods) -> object:
     sfn_client = boto3.Session(
         profile_name=profile_name
     ).client(
@@ -187,26 +178,38 @@ def run_for_profile(profile_name: str, period: Periods) -> Table:
     )
     state_machines = sfn_client.list_state_machines().get("stateMachines")
     if state_machines:
-        def _run_for_state_machine(state_machine):
-            return run_for_state_machine(
+        # def _run_for_state_machine(state_machine):
+        #     return run_for_state_machine(
+        #         state_machine=state_machine,
+        #         cloudwatch_resource=cloudwatch_resource,
+        #         sfn_client=sfn_client,
+        #         profile_name=profile_name,
+        #         period=period,
+        #     )
+        #
+        # with ThreadPoolExecutor(
+        #         min(len(state_machines), MAX_POOL_CONNECTIONS)
+        # ) as thread:
+        #     state_machine_generator = thread.map(_run_for_state_machine, state_machines)
+        # return state_machine_generator
+
+        coros = [
+            run_for_state_machine(
                 state_machine=state_machine,
                 cloudwatch_resource=cloudwatch_resource,
                 sfn_client=sfn_client,
                 profile_name=profile_name,
                 period=period,
-            )
-
-        with ThreadPoolExecutor(
-                min(len(state_machines), MAX_POOL_CONNECTIONS)
-        ) as thread:
-            state_machine_generator = thread.map(_run_for_state_machine, state_machines)
-        return state_machine_generator
+                ) for state_machine in state_machines
+        ]
+        profile_data = await asyncio.gather(*coros)
+        return profile_data
     else:
         logger.info(f"no statemachines found for profile {profile_name}")
         return ()
 
 
-def call_metric_endpoint(
+async def call_metric_endpoint(
         metric_name: str, cloudwatch_resource: object, state_machine_arn: str, period_object: Periods
 ):
     """
@@ -230,7 +233,7 @@ def call_metric_endpoint(
     return sum_of_datapoints
 
 
-def get_sfn_data(
+async def get_sfn_data(
         cloudwatch_resource: object, sfn_client:object, state_machine_arn: str, period: Periods
 ) -> State:
     """
@@ -248,13 +251,13 @@ def get_sfn_data(
 
     """
 
-    def _call_metric_endpoint(metric_name):
-        return call_metric_endpoint(
-            metric_name=metric_name,
-            cloudwatch_resource=cloudwatch_resource,
-            state_machine_arn=state_machine_arn,
-            period_object=period,
-        )
+    # def _call_metric_endpoint(metric_name):
+    #     return call_metric_endpoint(
+    #         metric_name=metric_name,
+    #         cloudwatch_resource=cloudwatch_resource,
+    #         state_machine_arn=state_machine_arn,
+    #         period_object=period,
+    #     )
 
     metrics = [
         "ExecutionsStarted",
@@ -265,11 +268,20 @@ def get_sfn_data(
         "ExecutionThrottled",
     ]
 
-    with ThreadPoolExecutor(len(metrics)) as thread:
-        started, succeeded, failed, aborted, timed_out, throttled = list(
-            thread.map(_call_metric_endpoint, metrics)
-        )
-
+    # with ThreadPoolExecutor(len(metrics)) as thread:
+    #     started, succeeded, failed, aborted, timed_out, throttled = list(
+    #         thread.map(_call_metric_endpoint, metrics)
+    #     )
+    coros = [
+        call_metric_endpoint(
+            metric_name=metric_name,
+            cloudwatch_resource=cloudwatch_resource,
+            state_machine_arn=state_machine_arn,
+            period_object=period,
+        ) for metric_name in metrics]
+    # started, succeeded, failed, aborted, timed_out, throttled = map(_call_metric_endpoint, metrics)
+    # started, succeeded, failed, aborted, timed_out, throttled = await asyncio.gather(*coros)
+    started, succeeded, failed, aborted, timed_out, throttled = await asyncio.gather(*coros)
     running = get_running_executions_for_state_machine(
         sfn_client=sfn_client, state_machine_arn=state_machine_arn
     )
