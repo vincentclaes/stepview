@@ -1,18 +1,20 @@
 import asyncio
-from collections import defaultdict
-from dataclasses import dataclass
 
 import boto3
-import nest_asyncio
+import botocore.client
 import pendulum
-from rich.table import Table
 
+from rich.progress import Progress, TextColumn, BarColumn
+from rich.table import Table
+from dataclasses import dataclass
 from stepview import logger
+from concurrent.futures import ThreadPoolExecutor
 
 
 @dataclass
-class States:
-    """States that we pass to the TUI table."""
+class State:
+    """State that we pass to the TUI table."""
+
     total_executions: int
     succeeded: str
     succeeded_perc: str
@@ -24,8 +26,40 @@ class States:
 
 
 @dataclass
+class Row:
+    state_machine: str
+    profile_name: str
+    account: str
+    region: str
+    state: State
+
+    def get_values(self):
+        return (
+            self.state_machine,
+            self.profile_name,
+            self.account,
+            self.region,
+            f"{self.state.total_executions:,.0f}",
+            f"{self.state.succeeded_perc:,.2f}",
+            f"{self.state.running}",
+            f"{self.state.failed:,.0f}/"
+            f"{self.state.failed:,.0f}/"
+            f"{self.state.aborted:,.0f}/"
+            f"{self.state.timed_out:,.0f}/"
+            f"{self.state.throttled:,.0f}"
+            # f"{self.state.failed:,.0f}",
+            # f"{self.state.aborted:,.0f}",
+            # f"{self.state.timed_out:,.0f}",
+            # f"{self.state.throttled:,.0f}"
+
+        )
+
+
+@dataclass
 class Periods:
-    """We use Periods class to get the datetime range."""
+    """We use Periods class to get the datetime range
+    for collecting the metrics."""
+
     start_date_of_period: pendulum.DateTime
     now: pendulum.DateTime
     granularity: str
@@ -40,6 +74,7 @@ class MetricNames:
     more info here:
     https://docs.aws.amazon.com/step-functions/latest/dg/procedure-cw-metrics.html#cloudwatch-step-functions-execution-metrics
     """
+
     EXECUTIONS_STARTED = "ExecutionsStarted"
     EXECUTIONS_SUCCEEDED = "ExecutionsSucceeded"
     EXECUTIONS_FAILED = "ExecutionsFailed"
@@ -57,138 +92,130 @@ class Time:
     MONTH = "month"
     YEAR = "year"
 
+    @classmethod
+    def get_time_variables(cls):
+        return [v for k, v in cls.__dict__.items()
+                if not k.startswith("__")
+                and not k.endswith('__')
+                and not "method" in str(v)
+                and not "function" in str(v)]
+
 
 NOW = pendulum.now()
-
-PERIODS_MAPPING = {
-    Time.MINUTE: Periods(NOW.subtract(minutes=1), NOW, "microseconds"),
-    Time.HOUR: Periods(NOW.subtract(hours=1), NOW, "seconds"),
-    Time.TODAY: Periods(NOW.start_of("day"), NOW, "seconds"),
-    Time.DAY: Periods(NOW.subtract(days=1), NOW, "seconds"),
-    Time.WEEK: Periods(NOW.subtract(weeks=1), NOW, "hours"),
-    Time.MONTH: Periods(NOW.subtract(months=1), NOW, "hours"),
-    Time.YEAR: Periods(NOW.subtract(years=1), NOW, "hours"),
-}
+MAX_POOL_CONNECTIONS = 10
 
 
 async def main(aws_profiles: list, period: str):
+    period = get_period_objects(period=period)
+    all_profile_data = []
+    progress_viz = (TextColumn("[progress.description]{task.description}"), BarColumn())
+    with Progress(*progress_viz) as progress:
+        # profile_generator = run_all_profiles(aws_profiles=aws_profiles, period=period)
+        for aws_profile in aws_profiles:
+            progress.add_task(f"[green]Getting Data for profile {aws_profile}...", start=False)
+            profile_data = await run_for_profile(profile_name=aws_profile, period=period)
+            all_profile_data.append(profile_data)
+
     table = Table()
     table.add_column("StateMachine", justify="left", overflow="fold")
-    table.add_column("Profile")
-    table.add_column("Account")
-    table.add_column("Region")
-    table.add_column("Total")
-    table.add_column("Succeed (%)")
-    table.add_column("Running")
-    table.add_column("Failed")
-    table.add_column("Aborted")
-    table.add_column("TimedOut")
-    table.add_column("Throttled")
-    rows = await run_all_profiles(
-        aws_profiles=aws_profiles,
-        period=period
+    table.add_column("Profile", overflow="fold")
+    table.add_column("Account", overflow="fold")
+    table.add_column("Region", overflow="fold")
+    table.add_column("Total", overflow="fold")
+    table.add_column("Succeed (%)", overflow="fold")
+    table.add_column("Running", overflow="fold")
+    table.add_column("Failed/Aborted/TimedOut/Throttled", overflow="fold")
+
+    all_rows = []
+    for profile in all_profile_data:
+        for row in profile:
+            if row:
+                table.add_row(*row.get_values())
+            all_rows.append(row)
+
+    # return table for viz, return all_rows for tests
+    return table, all_rows
+
+async def run_for_state_machine(
+        state_machine: object, cloudwatch_resource: object, sfn_client: object, profile_name: str, period: Periods
+):
+    state_machine_arn = state_machine.get("stateMachineArn")
+    state = await get_sfn_data(
+        cloudwatch_resource=cloudwatch_resource,
+        sfn_client=sfn_client,
+        state_machine_arn=state_machine_arn,
+        period=period,
     )
-    for row in rows:
-        if row:
-            table.add_row(*row)
-    return table
+    arn_parsed = parse_aws_arn(state_machine_arn)
+    account = arn_parsed.get("account")
+    region = arn_parsed.get("region")
+    state_machine_name = state_machine.get("name")
+    state_machine_url = get_statemachine_url(
+        state_machine_arn=state_machine_arn, region=region
+    )
+    state_machine_name_with_url = f"[link={state_machine_url}]{state_machine_name}[/link]"
+    row = Row(
+        state_machine=state_machine_name_with_url,
+        profile_name=profile_name,
+        account=account,
+        region=region,
+        state=state
+
+    )
+    return row
 
 
-async def run_all_profiles(aws_profiles: list, period: str):
-    # nest_asyncio.apply()
-    # loop = asyncio.get_event_loop()
-    # results = await [
-    #     run_for_profile(profile_name=profile_name, period=period) for profile_name in aws_profiles
-    # ]
-    coros = [run_for_profile(profile_name=aws_profile, period=period) for aws_profile in aws_profiles ]
-    results = await asyncio.gather(*coros)
-    # tasks = func_normal(), func_infinite()
-    # done, _ = loop.run_until_complete(
-    #     asyncio.gather(*results)
-    # )
-    # _
-    # results = await asyncio.gather(*[x(i) for i in range(10)])
-    # loop = asyncio.get_event_loop()
-    # loop.run_until_complete(
-    #     asyncio.gather(*[
-    #         run_for_profile(profile_name=profile_name, period=period)
-    #         for profile_name in aws_profiles]
-    #                    )
-    # )
-    # results = await asyncio.gather(*[
-    #     run_for_profile(profile_name=profile_name, period=period)
-    #                                  for profile_name in aws_profiles]
-    # )
-    return results
-    # pass
-
-
-async def run_for_profile(profile_name: str, period: str) -> Table:
-    sfn_client = boto3.Session(profile_name=profile_name).client("stepfunctions")
+async def run_for_profile(profile_name: str, period: Periods) -> object:
+    sfn_client = boto3.Session(
+        profile_name=profile_name
+    ).client(
+        "stepfunctions",
+        config=botocore.client.Config(max_pool_connections=MAX_POOL_CONNECTIONS)
+    )
     cloudwatch_resource = boto3.Session(profile_name=profile_name).resource(
-        "cloudwatch"
+        "cloudwatch",
+        config=botocore.client.Config(max_pool_connections=MAX_POOL_CONNECTIONS)
     )
     state_machines = sfn_client.list_state_machines().get("stateMachines")
     if state_machines:
-        for state_machine in state_machines:
-            state_machine_arn = state_machine.get("stateMachineArn")
-            states = get_data_from_cloudwatch(
+        # def _run_for_state_machine(state_machine):
+        #     return run_for_state_machine(
+        #         state_machine=state_machine,
+        #         cloudwatch_resource=cloudwatch_resource,
+        #         sfn_client=sfn_client,
+        #         profile_name=profile_name,
+        #         period=period,
+        #     )
+        #
+        # with ThreadPoolExecutor(
+        #         min(len(state_machines), MAX_POOL_CONNECTIONS)
+        # ) as thread:
+        #     state_machine_generator = thread.map(_run_for_state_machine, state_machines)
+        # return state_machine_generator
+
+        coros = [
+            run_for_state_machine(
+                state_machine=state_machine,
                 cloudwatch_resource=cloudwatch_resource,
-                state_machine_arn=state_machine_arn,
+                sfn_client=sfn_client,
+                profile_name=profile_name,
                 period=period,
-            )
-            arn_parsed = parse_aws_arn(state_machine_arn)
-            account = arn_parsed.get("account")
-            region = arn_parsed.get("region")
-            state_machine_name = state_machine.get("name")
-            state_machine_url = get_statemachine_url(
-                state_machine_arn=state_machine_arn, region=region
-            )
-            state_machine_name_url = (
-                f"[link={state_machine_url}]{state_machine_name}[/link]"
-            )
-            # table.add_row(
-            #     state_machine_name_url,
-            #     profile_name,
-            #     account,
-            #     region,
-            #     f"{states.total_executions:,.0f}",
-            #     f"{states.succeeded_perc:,.2f}",
-            #     f"{states.running:,.0f}",
-            #     f"{states.failed:,.0f}",
-            #     f"{states.aborted:,.0f}",
-            #     f"{states.timed_out:,.0f}",
-            #     f"{states.throttled:,.0f}",
-            # )
-            return_object = (
-                state_machine_name_url,
-                profile_name,
-                account,
-                region,
-                f"{states.total_executions:,.0f}",
-                f"{states.succeeded_perc:,.2f}",
-                f"{states.running:,.0f}",
-                f"{states.failed:,.0f}",
-                f"{states.aborted:,.0f}",
-                f"{states.timed_out:,.0f}",
-                f"{states.throttled:,.0f}",
-            )
-            return return_object
-            # return "bam"
+                ) for state_machine in state_machines
+        ]
+        profile_data = await asyncio.gather(*coros)
+        return profile_data
     else:
         logger.info(f"no statemachines found for profile {profile_name}")
         return ()
 
 
-def call_metric_endpoint(
-        metric_name, cloudwatch_resource, state_machine_arn, period_object
+async def call_metric_endpoint(
+        metric_name: str, cloudwatch_resource: object, state_machine_arn: str, period_object: Periods
 ):
     """
     https://boto3.amazonaws.com/v1/documentation/api/latest/reference/services/cloudwatch.html#metric
     """
-    metric = cloudwatch_resource \
-        .Metric("AWS/States", metric_name) \
-        .get_statistics(
+    metric = cloudwatch_resource.Metric("AWS/States", metric_name).get_statistics(
         Dimensions=[
             {
                 "Name": "StateMachineArn",
@@ -206,9 +233,9 @@ def call_metric_endpoint(
     return sum_of_datapoints
 
 
-def get_data_from_cloudwatch(
-        cloudwatch_resource: object, state_machine_arn: str, period: str
-) -> States:
+async def get_sfn_data(
+        cloudwatch_resource: object, sfn_client:object, state_machine_arn: str, period: Periods
+) -> State:
     """
     check the docs for more info
     https://docs.aws.amazon.com/step-functions/latest/dg/procedure-cw-metrics.html
@@ -224,51 +251,44 @@ def get_data_from_cloudwatch(
 
     """
 
-    period_object = get_period_objects(period=period)
-    started = call_metric_endpoint(
-        metric_name="ExecutionsStarted",
-        cloudwatch_resource=cloudwatch_resource,
-        state_machine_arn=state_machine_arn,
-        period_object=period_object,
-    )
-    succeeded = call_metric_endpoint(
-        metric_name="ExecutionsSucceeded",
-        cloudwatch_resource=cloudwatch_resource,
-        state_machine_arn=state_machine_arn,
-        period_object=period_object,
-    )
-    failed = call_metric_endpoint(
-        metric_name="ExecutionsFailed",
-        cloudwatch_resource=cloudwatch_resource,
-        state_machine_arn=state_machine_arn,
-        period_object=period_object,
+    # def _call_metric_endpoint(metric_name):
+    #     return call_metric_endpoint(
+    #         metric_name=metric_name,
+    #         cloudwatch_resource=cloudwatch_resource,
+    #         state_machine_arn=state_machine_arn,
+    #         period_object=period,
+    #     )
+
+    metrics = [
+        "ExecutionsStarted",
+        "ExecutionsSucceeded",
+        "ExecutionsFailed",
+        "ExecutionsAborted",
+        "ExecutionsTimedOut",
+        "ExecutionThrottled",
+    ]
+
+    # with ThreadPoolExecutor(len(metrics)) as thread:
+    #     started, succeeded, failed, aborted, timed_out, throttled = list(
+    #         thread.map(_call_metric_endpoint, metrics)
+    #     )
+    coros = [
+        call_metric_endpoint(
+            metric_name=metric_name,
+            cloudwatch_resource=cloudwatch_resource,
+            state_machine_arn=state_machine_arn,
+            period_object=period,
+        ) for metric_name in metrics]
+    # started, succeeded, failed, aborted, timed_out, throttled = map(_call_metric_endpoint, metrics)
+    # started, succeeded, failed, aborted, timed_out, throttled = await asyncio.gather(*coros)
+    started, succeeded, failed, aborted, timed_out, throttled = await asyncio.gather(*coros)
+    running = get_running_executions_for_state_machine(
+        sfn_client=sfn_client, state_machine_arn=state_machine_arn
     )
 
-    aborted = call_metric_endpoint(
-        metric_name="ExecutionsAborted",
-        cloudwatch_resource=cloudwatch_resource,
-        state_machine_arn=state_machine_arn,
-        period_object=period_object,
-    )
-    timed_out = call_metric_endpoint(
-        metric_name="ExecutionsTimedOut",
-        cloudwatch_resource=cloudwatch_resource,
-        state_machine_arn=state_machine_arn,
-        period_object=period_object,
-    )
-
-    throttled = call_metric_endpoint(
-        metric_name="ExecutionThrottled",
-        cloudwatch_resource=cloudwatch_resource,
-        state_machine_arn=state_machine_arn,
-        period_object=period_object,
-    )
-
-    running = started - succeeded - failed - aborted - timed_out - throttled
-    # running = 0
     succeeded_perc = (succeeded / started) * 100 if started > 0 else 0
 
-    return States(
+    return State(
         total_executions=started,
         succeeded=succeeded,
         succeeded_perc=succeeded_perc,
@@ -281,6 +301,16 @@ def get_data_from_cloudwatch(
 
 
 def get_period_objects(period: str):
+    PERIODS_MAPPING = {
+        Time.MINUTE: Periods(NOW.subtract(minutes=1), NOW, "microseconds"),
+        Time.HOUR: Periods(NOW.subtract(hours=1), NOW, "seconds"),
+        Time.TODAY: Periods(NOW.start_of("day"), NOW, "seconds"),
+        Time.DAY: Periods(NOW.subtract(days=1), NOW, "seconds"),
+        Time.WEEK: Periods(NOW.subtract(weeks=1), NOW, "hours"),
+        Time.MONTH: Periods(NOW.subtract(months=1), NOW, "hours"),
+        Time.YEAR: Periods(NOW.subtract(years=1), NOW, "hours"),
+    }
+
     try:
         period_object = PERIODS_MAPPING[period]
     except KeyError as e:
@@ -317,3 +347,17 @@ def parse_aws_arn(arn):
     elif ":" in result["resource"]:
         result["resource_type"], result["resource"] = result["resource"].split(":", 1)
     return result
+
+
+def get_running_executions_for_state_machine(
+    sfn_client: object, state_machine_arn: str
+):
+
+    executions = sfn_client.list_executions(
+        stateMachineArn=state_machine_arn,
+        statusFilter='RUNNING'
+    )
+    no_running = str(len(executions.get("executions")))
+    if executions.get("nextToken") is not None:
+        no_running = f"+{no_running}"
+    return no_running

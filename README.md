@@ -1,13 +1,13 @@
 # StepView
 
-Visualize a summary of all your stepfunctions in the terminal for
-multiple AWS profiles.
+Follow up on AWS Stepfunctions over different accounts, over different regions, in the terminal.
 
 ![stepview](./assets/stepview.png)
 
 - See the total executions of your statemachines.
 - See the % Succeeded executions.
-- See the # of Failed and Running executions.
+- See the # of Running executions.
+- See the # of Failed/Aborted/TimedOut/Throttled executions.
 - Click the statemachine name to navigate to the AWS console.
 
 
@@ -17,20 +17,22 @@ multiple AWS profiles.
 
 ## Usage
 
-    stepview --help
-
+    $ stepview --help
         Usage: stepview [OPTIONS]
-
+        
         Options:
-          --profile TEXT                  specify the aws profile you want to use as a
-                                          comma seperated string. For example '--
-                                          profile profile1,profile2,profile3,...'
-                                          [required]
-          --period TEXT                   specify the time period for which you wish
-                                          to look back. You can choose from the
-                                          values: "minute, hour, today, day, week,
-                                          month, year"   [default: day]
-          --help                          Show this message and exit.
+          --profile TEXT        specify the aws profile you want to use as a comma
+                                seperated string. For example '--profile
+                                profile1,profile2,profile3,...'  [default: default]
+                                
+          --period TEXT         specify the time period for which you wish to look
+                                back. You can choose from the values: minute, hour,
+                                today, day, week, month, year  [default: day]
+                                
+          --verbose             use --verbose to set verbose logging.
+          
+          --help                Show this message and exit.
+
 
 ## Example
 
@@ -40,7 +42,6 @@ multiple AWS profiles.
 ```
 stepview --profile foo,bar --period year
 ```
-> **NOTE** This is an alpha version, if you have a lot of statemachines/executions for your period it might crash because you reached the request limit for fetching data from stepfunctions. To solve it for now, use a smaller time period.
 
 <img src="https://public-assets-vincent-claes.s3.eu-west-1.amazonaws.com/stepview/stepview.gif" width="100%">
 
