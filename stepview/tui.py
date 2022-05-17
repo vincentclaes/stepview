@@ -1,3 +1,4 @@
+from rich.table import Table
 from textual import events
 from textual.app import App
 from textual.widgets import Footer
@@ -10,10 +11,11 @@ from stepview.data import main
 class StepViewTUI(App):
     """StepView shows a table with stepfunction statemachine summaries."""
 
-    def __init__(self, aws_profiles: list, period: str, *args, **kwargs):
+    def __init__(self, table: Table, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.aws_profiles = aws_profiles
-        self.period = period
+        self.table = table
+        # self.aws_profiles = aws_profiles
+        # self.period = period
 
     async def on_load(self, event: events.Load) -> None:
         """Bind keys with the app loads (but before entering application
@@ -31,7 +33,6 @@ class StepViewTUI(App):
         await self.view.dock(body, edge="right")
 
         async def get_stepfunction_data():
-            table, _ = main(aws_profiles=self.aws_profiles, period=self.period)
-            await body.update(table)
+            await body.update(self.table)
 
         await self.call_later(get_stepfunction_data)

@@ -4,8 +4,11 @@ from typing import List
 import typer
 
 from stepview import set_logger_3rd_party_lib
-from stepview.data import Time
+from stepview.data import Time, main
 from stepview.tui import StepViewTUI
+
+import warnings
+warnings.simplefilter("ignore", ResourceWarning)
 
 app = typer.Typer()
 
@@ -46,9 +49,9 @@ def stepview(
 ):
     if verbose:
         set_logger_3rd_party_lib(logging_level=logging.DEBUG)
-    StepViewTUI.run(
-        title=f"STEPVIEW (period: {period})", aws_profiles=profile, period=period
-    )
+
+    table, _ = main(aws_profiles=profile, period=period)
+    StepViewTUI.run(title=f"STEPVIEW (period: {period})", table=table)
 
 
 if __name__ == "__main__":

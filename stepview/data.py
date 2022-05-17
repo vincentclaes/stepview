@@ -1,5 +1,5 @@
 import boto3
-import botocore.client
+import botocore
 import pendulum
 
 from rich.progress import Progress, TextColumn, BarColumn
@@ -45,11 +45,6 @@ class Row:
             f"{self.state.aborted:,.0f}/"
             f"{self.state.timed_out:,.0f}/"
             f"{self.state.throttled:,.0f}"
-            # f"{self.state.failed:,.0f}",
-            # f"{self.state.aborted:,.0f}",
-            # f"{self.state.timed_out:,.0f}",
-            # f"{self.state.throttled:,.0f}"
-
         )
 
 
@@ -101,15 +96,23 @@ class Time:
 
 NOW = pendulum.now()
 MAX_POOL_CONNECTIONS = 10
+MAX_RUNNING_RESULTS = 10
 
 
 def main(aws_profiles: list, period: str):
     period = get_period_objects(period=period)
-
     progress_viz = (TextColumn("[progress.description]{task.description}"), BarColumn())
+
     with Progress(*progress_viz) as progress:
         progress.add_task("[green]Getting Data...", start=False)
-        profile_generator = run_all_profiles(aws_profiles=aws_profiles, period=period)
+        try:
+            profile_generator = run_all_profiles(aws_profiles=aws_profiles, period=period)
+        except botocore.client.ClientError as e:
+            if e.response['Error']['Code'] == 'ThrottlingException':
+                logger.info("Throttling exception. Please reduce the number of AWS profiles "
+                            "or filter on tags.")
+            else:
+                raise e
 
     table = Table()
     table.add_column("StateMachine", justify="left", overflow="fold")
@@ -120,9 +123,6 @@ def main(aws_profiles: list, period: str):
     table.add_column("Succeed (%)", overflow="fold")
     table.add_column("Running", overflow="fold")
     table.add_column("Failed/Aborted/TimedOut/Throttled", overflow="fold")
-    # table.add_column("Aborted")
-    # table.add_column("TimedOut")
-    # table.add_column("Throttled")
 
     all_rows = []
     for profile in profile_generator:
@@ -175,16 +175,15 @@ def run_for_state_machine(
 
 
 def run_for_profile(profile_name: str, period: Periods) -> Table:
-    sfn_client = boto3.Session(
-        profile_name=profile_name
-    ).client(
-        "stepfunctions",
-        config=botocore.client.Config(max_pool_connections=MAX_POOL_CONNECTIONS)
+    config = botocore.client.Config(
+        retries={
+            'max_attempts': 10,
+            'mode': 'standard'
+        },
+        max_pool_connections=MAX_POOL_CONNECTIONS
     )
-    cloudwatch_resource = boto3.Session(profile_name=profile_name).resource(
-        "cloudwatch",
-        config=botocore.client.Config(max_pool_connections=MAX_POOL_CONNECTIONS)
-    )
+    sfn_client = boto3.Session(profile_name=profile_name).client("stepfunctions", config=config)
+    cloudwatch_resource = boto3.Session(profile_name=profile_name).resource("cloudwatch", config=config)
     state_machines = sfn_client.list_state_machines().get("stateMachines")
     if state_machines:
         def _run_for_state_machine(state_machine):
@@ -270,9 +269,9 @@ def get_sfn_data(
             thread.map(_call_metric_endpoint, metrics)
         )
 
-    running = get_running_executions_for_state_machine(
-        sfn_client=sfn_client, state_machine_arn=state_machine_arn
-    )
+    running_ = started - succeeded - failed - aborted - timed_out - throttled
+    logger.debug(f"running calculated: {running_}")
+    running = running_ if running_ >= 0 else 0
 
     succeeded_perc = (succeeded / started) * 100 if started > 0 else 0
 
@@ -289,7 +288,7 @@ def get_sfn_data(
 
 
 def get_period_objects(period: str):
-    PERIODS_MAPPING = {
+    periods_mapping = {
         Time.MINUTE: Periods(NOW.subtract(minutes=1), NOW, "microseconds"),
         Time.HOUR: Periods(NOW.subtract(hours=1), NOW, "seconds"),
         Time.TODAY: Periods(NOW.start_of("day"), NOW, "seconds"),
@@ -300,10 +299,10 @@ def get_period_objects(period: str):
     }
 
     try:
-        period_object = PERIODS_MAPPING[period]
+        period_object = periods_mapping[period]
     except KeyError as e:
         raise NameError(
-            f"We did not recognize the value {period}. Please choose from {PERIODS_MAPPING.keys()}"
+            f"We did not recognize the value {period}. Please choose from {periods_mapping.keys()}"
         )
     return period_object
 
@@ -340,12 +339,12 @@ def parse_aws_arn(arn):
 def get_running_executions_for_state_machine(
     sfn_client: object, state_machine_arn: str
 ):
-
     executions = sfn_client.list_executions(
         stateMachineArn=state_machine_arn,
-        statusFilter='RUNNING'
+        statusFilter='RUNNING',
+        maxResults=MAX_RUNNING_RESULTS
     )
     no_running = str(len(executions.get("executions")))
-    if executions.get("nextToken") is not None:
-        no_running = f"+{no_running}"
+    if no_running >= MAX_RUNNING_RESULTS:
+        no_running = f">={no_running}"
     return no_running

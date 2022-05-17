@@ -393,14 +393,16 @@ class TestStepViewCli(unittest.TestCase):
     def setUpClass(cls) -> None:
         cls.runner = CliRunner()
 
+    @patch("stepview.entrypoint.main")
     @patch.object(App, "run")
-    def test_cli(self, m_textual_run):
+    def test_cli(self, m_textual_run,  m_main):
+        m_main.return_value = ("foo", "bar")
         # for some reason i cannot call the run function when instantiating
         # StepViewTui (subclass of textual.app.App) in this test.
         result = self.runner.invoke(
-            stepview.entrypoint.app, ["--profile", "profile1 profile2 profile3"]
+            stepview.entrypoint.app, ["--profile", "profile1,profile2,profile3"]
         )
-        self.assertEqual(result.exit_code, 0)
+        self.assertEqual(0, result.exit_code)
 
     def test_verbose(self):
         pass
