@@ -1,3 +1,6 @@
+from collections import defaultdict
+from typing import List, Optional
+
 import boto3
 import botocore
 import pendulum
@@ -25,7 +28,8 @@ class State:
 
 @dataclass
 class Row:
-    state_machine: str
+    state_machine_name: str
+    state_machine_name_with_url: str
     profile_name: str
     account: str
     region: str
@@ -33,7 +37,7 @@ class Row:
 
     def get_values(self):
         return (
-            self.state_machine,
+            self.state_machine_name_with_url,
             self.profile_name,
             self.account,
             self.region,
@@ -44,7 +48,7 @@ class Row:
             f"{self.state.failed:,.0f}/"
             f"{self.state.aborted:,.0f}/"
             f"{self.state.timed_out:,.0f}/"
-            f"{self.state.throttled:,.0f}"
+            f"{self.state.throttled:,.0f}",
         )
 
 
@@ -87,30 +91,38 @@ class Time:
 
     @classmethod
     def get_time_variables(cls):
-        return [v for k, v in cls.__dict__.items()
-                if not k.startswith("__")
-                and not k.endswith('__')
-                and not "method" in str(v)
-                and not "function" in str(v)]
+        return [
+            v
+            for k, v in cls.__dict__.items()
+            if not k.startswith("__")
+            and not k.endswith("__")
+            and not "method" in str(v)
+            and not "function" in str(v)
+        ]
 
 
 NOW = pendulum.now()
 MAX_POOL_CONNECTIONS = 10
 MAX_RUNNING_RESULTS = 10
+MAX_RETRIES = 10
 
 
-def main(aws_profiles: list, period: str):
+def main(aws_profiles: List[str], period: str, tags: Optional[List[tuple]]):
     period = get_period_objects(period=period)
     progress_viz = (TextColumn("[progress.description]{task.description}"), BarColumn())
 
     with Progress(*progress_viz) as progress:
         progress.add_task("[green]Getting Data...", start=False)
         try:
-            profile_generator = run_all_profiles(aws_profiles=aws_profiles, period=period)
+            profile_generator = run_all_profiles(
+                aws_profiles=aws_profiles, period=period, tags=tags
+            )
         except botocore.client.ClientError as e:
-            if e.response['Error']['Code'] == 'ThrottlingException':
-                logger.info("Throttling exception. Please reduce the number of AWS profiles "
-                            "or filter on tags.")
+            if e.response["Error"]["Code"] == "ThrottlingException":
+                logger.info(
+                    "Throttling exception. Please reduce the number of AWS profiles "
+                    "or filter on tags."
+                )
             else:
                 raise e
 
@@ -135,9 +147,11 @@ def main(aws_profiles: list, period: str):
     return table, all_rows
 
 
-def run_all_profiles(aws_profiles: list, period: Periods):
+def run_all_profiles(
+    aws_profiles: List[str], period: Periods, tags=Optional[List[tuple]]
+):
     def _run_for_profile(aws_profile: str):
-        return run_for_profile(profile_name=aws_profile, period=period)
+        return run_for_profile(profile_name=aws_profile, period=period, tags=tags)
 
     with ThreadPoolExecutor(len(aws_profiles)) as thread:
         profile_generator = thread.map(_run_for_profile, aws_profiles)
@@ -146,9 +160,12 @@ def run_all_profiles(aws_profiles: list, period: Periods):
 
 
 def run_for_state_machine(
-        state_machine: object, cloudwatch_resource: object, sfn_client: object, profile_name: str, period: Periods
+    state_machine_arn: str,
+    cloudwatch_resource: object,
+    sfn_client: object,
+    profile_name: str,
+    period: Periods,
 ):
-    state_machine_arn = state_machine.get("stateMachineArn")
     state = get_sfn_data(
         cloudwatch_resource=cloudwatch_resource,
         sfn_client=sfn_client,
@@ -158,55 +175,92 @@ def run_for_state_machine(
     arn_parsed = parse_aws_arn(state_machine_arn)
     account = arn_parsed.get("account")
     region = arn_parsed.get("region")
-    state_machine_name = state_machine.get("name")
+    state_machine_name = arn_parsed.get("resource")
     state_machine_url = get_statemachine_url(
         state_machine_arn=state_machine_arn, region=region
     )
-    state_machine_name_with_url = f"[link={state_machine_url}]{state_machine_name}[/link]"
+    state_machine_name_with_url = (
+        f"[link={state_machine_url}]{state_machine_name}[/link]"
+    )
     row = Row(
-        state_machine=state_machine_name_with_url,
+        state_machine_name=state_machine_name,
+        state_machine_name_with_url=state_machine_name_with_url,
         profile_name=profile_name,
         account=account,
         region=region,
-        state=state
-
+        state=state,
     )
     return row
 
 
-def run_for_profile(profile_name: str, period: Periods) -> Table:
-    config = botocore.client.Config(
-        retries={
-            'max_attempts': 10,
-            'mode': 'standard'
-        },
-        max_pool_connections=MAX_POOL_CONNECTIONS
-    )
-    sfn_client = boto3.Session(profile_name=profile_name).client("stepfunctions", config=config)
-    cloudwatch_resource = boto3.Session(profile_name=profile_name).resource("cloudwatch", config=config)
-    state_machines = sfn_client.list_state_machines().get("stateMachines")
-    if state_machines:
-        def _run_for_state_machine(state_machine):
-            return run_for_state_machine(
-                state_machine=state_machine,
-                cloudwatch_resource=cloudwatch_resource,
-                sfn_client=sfn_client,
-                profile_name=profile_name,
-                period=period,
-            )
+def get_statemachines(sfn_client: object, tags_client:object, tags: Optional[List[tuple]]) -> list:
 
-        with ThreadPoolExecutor(
+    # parse tags
+    tags_ = defaultdict(list)
+    for key, value in tags:
+        tags_[key].append(value)
+    tag_filters = [{"Key": key, "Values": value}for key, value in tags_.items()]
+
+    tagging_paginator = tags_client.get_paginator('get_resources')
+    for page_for_tags in tagging_paginator.paginate(
+            ResourceTypeFilters=['states:stateMachine'],
+            TagFilters=tag_filters
+    ):
+        statemachines = page_for_tags.get("ResourceTagMappingList")
+        if statemachines:
+            yield_ = [statemachine.get("ResourceARN") for statemachine in statemachines]
+            yield yield_
+        else:
+            logger.info(f"No statemachines were found for tags: {tags}")
+
+
+def run_for_profile(
+    profile_name: str, period: Periods, tags: Optional[List[tuple]]
+) -> list[Row]:
+    config = botocore.client.Config(
+        retries={"max_attempts": MAX_RETRIES, "mode": "standard"},
+        max_pool_connections=MAX_POOL_CONNECTIONS,
+    )
+    sfn_client = boto3.Session(profile_name=profile_name).client(
+        "stepfunctions", config=config
+    )
+    cloudwatch_resource = boto3.Session(profile_name=profile_name).resource(
+        "cloudwatch", config=config
+    )
+    tags_client = boto3.Session(profile_name=profile_name).client(
+        "resourcegroupstaggingapi", config=config
+    )
+    all_statemachine_results = []
+    for state_machines in get_statemachines(sfn_client=sfn_client, tags_client=tags_client, tags=tags):
+        if state_machines:
+            def _run_for_state_machine(state_machine_arn):
+                return run_for_state_machine(
+                    state_machine_arn=state_machine_arn,
+                    cloudwatch_resource=cloudwatch_resource,
+                    sfn_client=sfn_client,
+                    profile_name=profile_name,
+                    period=period,
+                )
+
+            with ThreadPoolExecutor(
                 min(len(state_machines), MAX_POOL_CONNECTIONS)
-        ) as thread:
-            state_machine_generator = thread.map(_run_for_state_machine, state_machines)
-        return state_machine_generator
-    else:
-        logger.info(f"no statemachines found for profile {profile_name}")
-        return ()
+            ) as thread:
+                state_machine_results = thread.map(
+                    _run_for_state_machine, state_machines
+                )
+            all_statemachine_results.extend(state_machine_results)
+        else:
+            logger.info(f"no statemachines found for profile {profile_name}")
+    all_statemachine_results_ = {row.state_machine_name: row for row in all_statemachine_results}
+    all_statemachine_results_sorted = list(dict(sorted(all_statemachine_results_.items())).values())
+    return all_statemachine_results_sorted
 
 
 def call_metric_endpoint(
-        metric_name: str, cloudwatch_resource: object, state_machine_arn: str, period_object: Periods
+    metric_name: str,
+    cloudwatch_resource: object,
+    state_machine_arn: str,
+    period_object: Periods,
 ):
     """
     https://boto3.amazonaws.com/v1/documentation/api/latest/reference/services/cloudwatch.html#metric
@@ -230,7 +284,10 @@ def call_metric_endpoint(
 
 
 def get_sfn_data(
-        cloudwatch_resource: object, sfn_client:object, state_machine_arn: str, period: Periods
+    cloudwatch_resource: object,
+    sfn_client: object,
+    state_machine_arn: str,
+    period: Periods,
 ) -> State:
     """
     check the docs for more info
@@ -341,8 +398,8 @@ def get_running_executions_for_state_machine(
 ):
     executions = sfn_client.list_executions(
         stateMachineArn=state_machine_arn,
-        statusFilter='RUNNING',
-        maxResults=MAX_RUNNING_RESULTS
+        statusFilter="RUNNING",
+        maxResults=MAX_RUNNING_RESULTS,
     )
     no_running = str(len(executions.get("executions")))
     if no_running >= MAX_RUNNING_RESULTS:
