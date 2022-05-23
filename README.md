@@ -24,12 +24,15 @@ Follow up on AWS Stepfunctions over different accounts, over different regions, 
           --profile TEXT        Specify the aws profile you want to use as a comma
                                 seperated string. For example '--profile
                                 profile1,profile2,profile3,...'  [default: default]
+
           --period TEXT         Specify the time period for which you wish to look
                                 back. You can choose from the values: minute, hour,
                                 today, day, week, month, year  [default: day]
+
           --tags TEXT           Specify the tags you want to filter your stepfunctions
                                 statemachine. Provide your tags as comma seperated key
                                 words: --tags foo=bar,baz=qux
+
           --verbose             Use --verbose to set verbose logging.
 
 

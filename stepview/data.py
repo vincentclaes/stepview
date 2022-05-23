@@ -2,7 +2,7 @@ from collections import defaultdict
 from typing import List, Optional
 
 import boto3
-import botocore
+import botocore.client
 import pendulum
 
 from rich.progress import Progress, TextColumn, BarColumn
@@ -191,7 +191,6 @@ def run_for_state_machine(
         state=state,
     )
     return row
-
 
 
 def get_resource_page_for_tags(tags_client:object, tags_filters: list):
