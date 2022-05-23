@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "stepview"
-version = "0.4.0"
+version = "0.4.1"
 description = "1 global view of all your stepfunctions statemachines"
 authors = ["vincent <vclaes1986@gmail.com>"]
 license = "GNU GPLv3"

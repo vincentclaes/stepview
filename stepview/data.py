@@ -45,7 +45,6 @@ class Row:
             f"{self.state.succeeded_perc:,.2f}",
             f"{self.state.running}",
             f"{self.state.failed:,.0f}/"
-            f"{self.state.failed:,.0f}/"
             f"{self.state.aborted:,.0f}/"
             f"{self.state.timed_out:,.0f}/"
             f"{self.state.throttled:,.0f}",
@@ -200,7 +199,6 @@ def get_resource_page_for_tags(tags_client:object, tags_filters: list):
             TagFilters=tags_filters
     ):
         yield page_for_tags
-
 
 
 def parse_tags(tags: Optional[List[tuple]]):
