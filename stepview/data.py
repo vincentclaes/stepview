@@ -131,7 +131,7 @@ def main(aws_profiles: List[str], period: str, tags: Optional[List[tuple]]):
     table.add_column("Profile", overflow="fold")
     table.add_column("Account", overflow="fold")
     table.add_column("Region", overflow="fold")
-    table.add_column("Total", overflow="fold")
+    table.add_column("Started", overflow="fold")
     table.add_column("Succeed (%)", overflow="fold")
     table.add_column("Running", overflow="fold")
     table.add_column("Failed/Aborted/TimedOut/Throttled", overflow="fold")
@@ -224,7 +224,7 @@ def get_statemachines(tags_client:object, tags: Optional[List[tuple]]) -> list:
 
 def run_for_profile(
     profile_name: str, period: Periods, tags: Optional[List[tuple]]
-) -> list[Row]:
+) -> list:
     config = botocore.client.Config(
         retries={"max_attempts": MAX_RETRIES, "mode": "standard"},
         max_pool_connections=MAX_POOL_CONNECTIONS,
