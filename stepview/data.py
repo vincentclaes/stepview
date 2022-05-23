@@ -103,7 +103,7 @@ class Time:
 
 NOW = pendulum.now()
 MAX_POOL_CONNECTIONS = 10
-MAX_RUNNING_RESULTS = 10
+MAX_RUNNING_RESULTS = 3
 MAX_RETRIES = 10
 
 
@@ -193,19 +193,28 @@ def run_for_state_machine(
     return row
 
 
-def get_statemachines(sfn_client: object, tags_client:object, tags: Optional[List[tuple]]) -> list:
 
-    # parse tags
-    tags_ = defaultdict(list)
-    for key, value in tags:
-        tags_[key].append(value)
-    tag_filters = [{"Key": key, "Values": value}for key, value in tags_.items()]
-
+def get_resource_page_for_tags(tags_client:object, tags_filters: list):
     tagging_paginator = tags_client.get_paginator('get_resources')
     for page_for_tags in tagging_paginator.paginate(
             ResourceTypeFilters=['states:stateMachine'],
-            TagFilters=tag_filters
+            TagFilters=tags_filters
     ):
+        yield page_for_tags
+
+
+
+def parse_tags(tags: Optional[List[tuple]]):
+    tags_ = defaultdict(list)
+    for key, value in tags:
+        tags_[key].append(value)
+    tags_filters = [{"Key": key, "Values": value}for key, value in tags_.items()]
+    return tags_filters
+
+
+def get_statemachines(tags_client:object, tags: Optional[List[tuple]]) -> list:
+    tags_filters = parse_tags(tags=tags)
+    for page_for_tags in get_resource_page_for_tags(tags_client=tags_client, tags_filters=tags_filters):
         statemachines = page_for_tags.get("ResourceTagMappingList")
         if statemachines:
             yield_ = [statemachine.get("ResourceARN") for statemachine in statemachines]
@@ -231,7 +240,7 @@ def run_for_profile(
         "resourcegroupstaggingapi", config=config
     )
     all_statemachine_results = []
-    for state_machines in get_statemachines(sfn_client=sfn_client, tags_client=tags_client, tags=tags):
+    for state_machines in get_statemachines(tags_client=tags_client, tags=tags):
         if state_machines:
             def _run_for_state_machine(state_machine_arn):
                 return run_for_state_machine(
@@ -326,9 +335,12 @@ def get_sfn_data(
             thread.map(_call_metric_endpoint, metrics)
         )
 
-    running_ = started - succeeded - failed - aborted - timed_out - throttled
-    logger.debug(f"running calculated: {running_}")
-    running = running_ if running_ >= 0 else 0
+    running = get_running_executions_for_state_machine(
+        sfn_client=sfn_client, state_machine_arn=state_machine_arn
+    )
+    # running_ = started - succeeded - failed - aborted - timed_out - throttled
+    # logger.debug(f"running calculated: {running_}")
+    # running = running_ if running_ >= 0 else 0
 
     succeeded_perc = (succeeded / started) * 100 if started > 0 else 0
 
@@ -395,13 +407,13 @@ def parse_aws_arn(arn):
 
 def get_running_executions_for_state_machine(
     sfn_client: object, state_machine_arn: str
-):
+) -> str:
     executions = sfn_client.list_executions(
         stateMachineArn=state_machine_arn,
         statusFilter="RUNNING",
         maxResults=MAX_RUNNING_RESULTS,
     )
-    no_running = str(len(executions.get("executions")))
+    no_running = len(executions.get("executions"))
     if no_running >= MAX_RUNNING_RESULTS:
         no_running = f">={no_running}"
     return no_running

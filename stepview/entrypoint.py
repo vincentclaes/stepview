@@ -54,19 +54,17 @@ def stepview(
         help="Use --verbose to set verbose logging."),
 
 ):
+    _tags = []
     if tags is not None:
-        _tags = []
         for tag in tags:
             if "=" in tag:
                 key, value = tag.split("=")
                 _tags.append((key, value))
-        tags = _tags
-
     if verbose:
         set_logger_3rd_party_lib(logging_level=logging.DEBUG)
 
-    table, _ = main(aws_profiles=profile, period=period, tags=tags)
-    StepViewTUI.run(title=f"STEPVIEW (period: {period})", table=table)
+    table, _ = main(aws_profiles=profile, period=period, tags=_tags)
+    StepViewTUI.run(title=f"STEPVIEW (period: {period}, tags: {', '.join(tags)})", table=table)
 
 
 if __name__ == "__main__":
