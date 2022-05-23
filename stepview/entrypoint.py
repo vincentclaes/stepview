@@ -46,7 +46,7 @@ def stepview(
     tags: List[str] = typer.Option(
         default=[],
         callback=parse_string_to_list,
-        help="Specify the tags you want to filter your stepfunctions statemachine."
+        help="Specify the tags you want to filter your stepfunctions statemachine. "
              "Provide your tags as comma seperated key words: --tags foo=bar,baz=qux",
     ),
     verbose: bool = typer.Option(

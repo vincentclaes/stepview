@@ -21,17 +21,17 @@ Follow up on AWS Stepfunctions over different accounts, over different regions, 
         Usage: stepview [OPTIONS]
         
         Options:
-          --profile TEXT        specify the aws profile you want to use as a comma
+          --profile TEXT        Specify the aws profile you want to use as a comma
                                 seperated string. For example '--profile
                                 profile1,profile2,profile3,...'  [default: default]
-                                
-          --period TEXT         specify the time period for which you wish to look
+          --period TEXT         Specify the time period for which you wish to look
                                 back. You can choose from the values: minute, hour,
                                 today, day, week, month, year  [default: day]
-                                
-          --verbose             use --verbose to set verbose logging.
-          
-          --help                Show this message and exit.
+          --tags TEXT           Specify the tags you want to filter your stepfunctions
+                                statemachine. Provide your tags as comma seperated key
+                                words: --tags foo=bar,baz=qux
+          --verbose             Use --verbose to set verbose logging.
+
 
 
 ## Example
