@@ -7,7 +7,7 @@ from unittest.mock import patch
 import boto3
 import pendulum
 from freezegun import freeze_time
-from moto import mock_stepfunctions, mock_cloudwatch
+from moto import mock_stepfunctions, mock_cloudwatch, mock_resourcegroupstaggingapi
 from textual.app import App
 from typer.testing import CliRunner
 
@@ -119,17 +119,18 @@ def create_metric(metric_name, profile, state_machine, timestamp=NOW.subtract(mi
 
 class TestStepView(unittest.TestCase):
 
-    @unittest.skip("temp disable because performance is curcial")
+    @patch("stepview.data.get_statemachines_for_tags")
     @mock_cloudwatch
     @mock_stepfunctions
-    def test_get_stepfunctions_status_happy_flow(self):
-
+    def test_get_stepfunctions_status_happy_flow(self, m_get_statemachines_for_tags):
         client, role, state_machine = create_statemachine("sm1", "profile1")
         create_metric(
             MetricNames.EXECUTIONS_SUCCEEDED,
             profile="profile1",
             state_machine=state_machine,
         )
+        state_machine["ResourceARN"] = state_machine["stateMachineArn"]
+        m_get_statemachines_for_tags.return_value = [[state_machine]]
 
         self.exception_ = None
         try:

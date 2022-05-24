@@ -80,6 +80,9 @@ class MetricNames:
 
 
 class Time:
+    """
+    Time period a user can choose to go back in time.
+    """
     MINUTE = "minute"
     HOUR = "hour"
     TODAY = "today"
@@ -106,7 +109,19 @@ MAX_RUNNING_RESULTS = 3
 MAX_RETRIES = 10
 
 
-def main(aws_profiles: List[str], period: str, tags: Optional[List[tuple]]):
+def main(aws_profiles: List[str], period: str, tags: Optional[List[tuple]]) -> tuple:
+    """Main function that fetches stepfunctions data, and returns a "rich" table.
+
+    Parameters
+    ----------
+    aws_profiles: List of aws profiles located at ~/.aws/credentials
+    period: An Attribute of Time class.
+    tags: Key-value pairs of tags that we use to filter the stepfunctions
+
+    Returns
+    -------
+        (Rich.Table, List of all rows for testing purposes)
+    """
     period = get_period_objects(period=period)
     progress_viz = (TextColumn("[progress.description]{task.description}"), BarColumn())
 
@@ -142,13 +157,13 @@ def main(aws_profiles: List[str], period: str, tags: Optional[List[tuple]]):
                 table.add_row(*row.get_values())
             all_rows.append(row)
 
-    # return table for viz, return all_rows for tests
     return table, all_rows
 
 
 def run_all_profiles(
     aws_profiles: List[str], period: Periods, tags=Optional[List[tuple]]
 ):
+    """ Run all profiles concurrently."""
     def _run_for_profile(aws_profile: str):
         return run_for_profile(profile_name=aws_profile, period=period, tags=tags)
 
@@ -158,71 +173,10 @@ def run_all_profiles(
     return profile_generator
 
 
-def run_for_state_machine(
-    state_machine_arn: str,
-    cloudwatch_resource: object,
-    sfn_client: object,
-    profile_name: str,
-    period: Periods,
-):
-    state = get_sfn_data(
-        cloudwatch_resource=cloudwatch_resource,
-        sfn_client=sfn_client,
-        state_machine_arn=state_machine_arn,
-        period=period,
-    )
-    arn_parsed = parse_aws_arn(state_machine_arn)
-    account = arn_parsed.get("account")
-    region = arn_parsed.get("region")
-    state_machine_name = arn_parsed.get("resource")
-    state_machine_url = get_statemachine_url(
-        state_machine_arn=state_machine_arn, region=region
-    )
-    state_machine_name_with_url = (
-        f"[link={state_machine_url}]{state_machine_name}[/link]"
-    )
-    row = Row(
-        state_machine_name=state_machine_name,
-        state_machine_name_with_url=state_machine_name_with_url,
-        profile_name=profile_name,
-        account=account,
-        region=region,
-        state=state,
-    )
-    return row
-
-
-def get_resource_page_for_tags(tags_client:object, tags_filters: list):
-    tagging_paginator = tags_client.get_paginator('get_resources')
-    for page_for_tags in tagging_paginator.paginate(
-            ResourceTypeFilters=['states:stateMachine'],
-            TagFilters=tags_filters
-    ):
-        yield page_for_tags
-
-
-def parse_tags(tags: Optional[List[tuple]]):
-    tags_ = defaultdict(list)
-    for key, value in tags:
-        tags_[key].append(value)
-    tags_filters = [{"Key": key, "Values": value}for key, value in tags_.items()]
-    return tags_filters
-
-
-def get_statemachines(tags_client:object, tags: Optional[List[tuple]]) -> list:
-    tags_filters = parse_tags(tags=tags)
-    for page_for_tags in get_resource_page_for_tags(tags_client=tags_client, tags_filters=tags_filters):
-        statemachines = page_for_tags.get("ResourceTagMappingList")
-        if statemachines:
-            yield_ = [statemachine.get("ResourceARN") for statemachine in statemachines]
-            yield yield_
-        else:
-            logger.info(f"No statemachines were found for tags: {tags}")
-
-
 def run_for_profile(
     profile_name: str, period: Periods, tags: Optional[List[tuple]]
 ) -> list:
+    """For each profile fetch all statemachine results."""
     config = botocore.client.Config(
         retries={"max_attempts": MAX_RETRIES, "mode": "standard"},
         max_pool_connections=MAX_POOL_CONNECTIONS,
@@ -262,14 +216,91 @@ def run_for_profile(
     return all_statemachine_results_sorted
 
 
+def run_for_state_machine(
+    state_machine_arn: str,
+    cloudwatch_resource: object,
+    sfn_client: object,
+    profile_name: str,
+    period: Periods,
+):
+    state = get_sfn_data(
+        cloudwatch_resource=cloudwatch_resource,
+        sfn_client=sfn_client,
+        state_machine_arn=state_machine_arn,
+        period=period,
+    )
+    arn_parsed = parse_aws_arn(state_machine_arn)
+    account = arn_parsed.get("account")
+    region = arn_parsed.get("region")
+    state_machine_name = arn_parsed.get("resource")
+    state_machine_url = get_statemachine_url(
+        state_machine_arn=state_machine_arn, region=region
+    )
+    state_machine_name_with_url = (
+        f"[link={state_machine_url}]{state_machine_name}[/link]"
+    )
+    row = Row(
+        state_machine_name=state_machine_name,
+        state_machine_name_with_url=state_machine_name_with_url,
+        profile_name=profile_name,
+        account=account,
+        region=region,
+        state=state,
+    )
+    return row
+
+
+def get_statemachines(tags_client:object, tags: Optional[List[tuple]]) -> list:
+    """Return a list of statemachine arns for a set of tags, if they are provided."""
+    tags_filters = parse_tags(tags=tags)
+    for statemachines in get_statemachines_for_tags(tags_client=tags_client, tags_filters=tags_filters):
+        if statemachines:
+            yield_ = [statemachine.get("ResourceARN") for statemachine in statemachines]
+            yield yield_
+        else:
+            logger.info(f"No statemachines were found for tags: {tags}")
+
+
+def parse_tags(tags: Optional[List[tuple]]):
+    """Parse the tags so that they can be handled by the boto3 resourcegroupstaggingapi client."""
+    tags_ = defaultdict(list)
+    for key, value in tags:
+        tags_[key].append(value)
+    tags_filters = [{"Key": key, "Values": value}for key, value in tags_.items()]
+    return tags_filters
+
+
+def get_statemachines_for_tags(tags_client:object, tags_filters: list) ->  list:
+    """Use a boto3 resourcegroupstaggingapi client to fetch all statemachine arns that
+    comply with the tags if  they are defined. If the tags are not defined fetch all
+    statemachines.
+
+    Parameters
+    ----------
+    tags_client: boto3 resourcegroupstaggingapi client.
+    tags_filters: list of parsed tags.
+
+    Returns
+    -------
+
+    """
+    tagging_paginator = tags_client.get_paginator('get_resources')
+    for page_for_tags in tagging_paginator.paginate(
+            ResourceTypeFilters=['states:stateMachine'],
+            TagFilters=tags_filters
+    ):
+        yield page_for_tags.get("ResourceTagMappingList")
+
+
 def call_metric_endpoint(
     metric_name: str,
     cloudwatch_resource: object,
     state_machine_arn: str,
     period_object: Periods,
 ):
-    """
+    """ Call cloudwatch metric endpoint to get statemachine data.
     https://boto3.amazonaws.com/v1/documentation/api/latest/reference/services/cloudwatch.html#metric
+    https://docs.aws.amazon.com/step-functions/latest/dg/procedure-cw-metrics.html
     """
     metric = cloudwatch_resource.Metric("AWS/States", metric_name).get_statistics(
         Dimensions=[
@@ -295,19 +326,8 @@ def get_sfn_data(
     state_machine_arn: str,
     period: Periods,
 ) -> State:
-    """
-    check the docs for more info
-    https://docs.aws.amazon.com/step-functions/latest/dg/procedure-cw-metrics.html
-
-    Parameters
-    ----------
-    cloudwatch_resource
-    state_machine_arn
-    period
-
-    Returns
-    -------
-
+    """get statemachine data from cloudwatch (All except the ones in state running)
+    and from stepfunctions API (all in state running).
     """
 
     def _call_metric_endpoint(metric_name):
@@ -335,9 +355,6 @@ def get_sfn_data(
     running = get_running_executions_for_state_machine(
         sfn_client=sfn_client, state_machine_arn=state_machine_arn
     )
-    # running_ = started - succeeded - failed - aborted - timed_out - throttled
-    # logger.debug(f"running calculated: {running_}")
-    # running = running_ if running_ >= 0 else 0
 
     succeeded_perc = (succeeded / started) * 100 if started > 0 else 0
 
