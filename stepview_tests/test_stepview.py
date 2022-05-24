@@ -423,15 +423,3 @@ class TestStepViewCli(unittest.TestCase):
             ],
         )
         self.assertEqual(0, result.exit_code)
-
-    @patch("stepview.entrypoint.main")
-    @patch.object(App, "run")
-    def test_cli_raise_exception(self, m_textual_run, m_main):
-        m_main.side_effect = Exception()
-        # for some reason i cannot call the run function when instantiating
-        # StepViewTui (subclass of textual.app.App) in this test.
-        with self.assertRaises(Exception):
-            self.runner.invoke(
-                stepview.entrypoint.app,
-                [],
-            )
