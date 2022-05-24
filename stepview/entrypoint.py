@@ -1,16 +1,21 @@
 import logging
+import warnings
 from typing import List
 
 import typer
+from rich import traceback
+from rich.console import Console
 
+from stepview import logger
 from stepview import set_logger_3rd_party_lib
-from stepview.data import Time, main
+from stepview.data import main
+from stepview.data import Time
 from stepview.tui import StepViewTUI
 
-import warnings
 warnings.simplefilter("ignore", ResourceWarning)
 
 app = typer.Typer()
+console = Console()
 
 
 def run():
@@ -30,6 +35,7 @@ def parse_string_to_list(arguments: str) -> list:
         return arguments[0].split(",")
     return []
 
+
 @app.command()
 def stepview(
     profile: List[str] = typer.Option(
@@ -47,12 +53,11 @@ def stepview(
         default=[],
         callback=parse_string_to_list,
         help="Specify the tags you want to filter your stepfunctions statemachine. "
-             "Provide your tags as comma seperated key words: --tags foo=bar,baz=qux",
+        "Provide your tags as comma seperated key words: --tags foo=bar,baz=qux",
     ),
     verbose: bool = typer.Option(
-        False, "--verbose",
-        help="Use --verbose to set verbose logging."),
-
+        False, "--verbose", help="Use --verbose to set verbose logging."
+    ),
 ):
     _tags = []
     if tags is not None:
@@ -62,9 +67,24 @@ def stepview(
                 _tags.append((key, value))
     if verbose:
         set_logger_3rd_party_lib(logging_level=logging.DEBUG)
-
-    table, _ = main(aws_profiles=profile, period=period, tags=_tags)
-    StepViewTUI.run(title=f"STEPVIEW (period: {period}, tags: {', '.join(tags)})", table=table)
+    try:
+        table, _ = main(aws_profiles=profile, period=period, tags=_tags)
+    except Exception as e:
+        console.print_exception()
+        console.log("Woops something went wrong.")
+        console.log(
+            "Remember that if you need  to fetch a lot (hundreds to thousands) of statemachines \n"
+            "make sure to add --tags to filter or reduce the number of --profile"
+        )
+        console.log("")
+        console.log(
+            "Let us help you, create a github issue here: https://bit.ly/3wHh70g"
+        )
+        console.log("")
+    else:
+        StepViewTUI.run(
+            title=f"STEPVIEW (period: {period}, tags: {', '.join(tags)})", table=table
+        )
 
 
 if __name__ == "__main__":

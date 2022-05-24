@@ -1,13 +1,15 @@
 import logging
 import os
-from pathlib import Path
 import warnings
+from pathlib import Path
 
 
 def set_logger_3rd_party_lib(logging_level=logging.CRITICAL):
     if logging_level == logging.CRITICAL:
-        warnings.filterwarnings(action="ignore", message="unclosed", category=ResourceWarning)
-    for name in ['boto3', 'botocore', 'urllib3']:
+        warnings.filterwarnings(
+            action="ignore", message="unclosed", category=ResourceWarning
+        )
+    for name in ["boto3", "botocore", "urllib3"]:
         logging.getLogger(name).setLevel(logging_level)
 
 
