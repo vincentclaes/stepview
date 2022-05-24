@@ -5,8 +5,6 @@ from textual.widgets import Footer
 from textual.widgets import Header
 from textual.widgets import ScrollView
 
-from stepview.data import main
-
 
 class StepViewTUI(App):
     """StepView shows a table with stepfunction statemachine summaries."""

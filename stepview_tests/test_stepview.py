@@ -8,7 +8,6 @@ import boto3
 import pendulum
 from freezegun import freeze_time
 from moto import mock_cloudwatch
-from moto import mock_resourcegroupstaggingapi
 from moto import mock_stepfunctions
 from textual.app import App
 from typer.testing import CliRunner
