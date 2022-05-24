@@ -7,13 +7,17 @@ from unittest.mock import patch
 import boto3
 import pendulum
 from freezegun import freeze_time
-from moto import mock_stepfunctions, mock_cloudwatch, mock_resourcegroupstaggingapi
+from moto import mock_cloudwatch
+from moto import mock_resourcegroupstaggingapi
+from moto import mock_stepfunctions
 from textual.app import App
 from typer.testing import CliRunner
 
 import stepview.data
 from stepview import entrypoint
-from stepview.data import MetricNames, NOW, Time
+from stepview.data import MetricNames
+from stepview.data import NOW
+from stepview.data import Time
 
 current_dir = Path(__file__).resolve().parent
 #
@@ -75,13 +79,12 @@ def create_statemachine(name, profile):
     return client, role, state_machine
 
 
-def create_metric(metric_name, profile, state_machine, timestamp=NOW.subtract(minutes=1)):
-    """
-    Add a metric to cloudwatch
-    check how to add MetricData from the documentation
-    https://boto3.amazonaws.com/v1/documentation/api/latest/reference/services/cloudwatch.html#CloudWatch.Client.put_metric_data
-
-    """
+def create_metric(
+    metric_name, profile, state_machine, timestamp=NOW.subtract(minutes=1)
+):
+    """Add a metric to cloudwatch check how to add MetricData from the
+    documentation https://boto3.amazonaws.com/v1/documentation/api/latest/refer
+    ence/services/cloudwatch.html#CloudWatch.Client.put_metric_data."""
 
     # point boto3 to our local credentials file
     # using an env var.
@@ -118,7 +121,6 @@ def create_metric(metric_name, profile, state_machine, timestamp=NOW.subtract(mi
 
 
 class TestStepView(unittest.TestCase):
-
     @patch("stepview.data.get_statemachines_for_tags")
     @mock_cloudwatch
     @mock_stepfunctions
@@ -162,19 +164,19 @@ class TestStepView(unittest.TestCase):
             MetricNames.EXECUTIONS_STARTED,
             profile="profile1",
             state_machine=state_machine,
-            timestamp=time_started
+            timestamp=time_started,
         )
         create_metric(
             MetricNames.EXECUTIONS_SUCCEEDED,
             profile="profile1",
             state_machine=state_machine,
-            timestamp=time_succeeded
+            timestamp=time_succeeded,
         )
         create_metric(
             MetricNames.EXECUTIONS_STARTED,
             profile="profile1",
             state_machine=state_machine,
-            timestamp=time_too_early
+            timestamp=time_too_early,
         )
 
         _, result = stepview.data.main(aws_profiles=["profile1"], period="minute")
@@ -208,19 +210,19 @@ class TestStepView(unittest.TestCase):
             MetricNames.EXECUTIONS_STARTED,
             profile="profile1",
             state_machine=state_machine,
-            timestamp=time_started
+            timestamp=time_started,
         )
         create_metric(
             MetricNames.EXECUTIONS_SUCCEEDED,
             profile="profile1",
             state_machine=state_machine,
-            timestamp=time_succeeded
+            timestamp=time_succeeded,
         )
         create_metric(
             MetricNames.EXECUTIONS_STARTED,
             profile="profile1",
             state_machine=state_machine,
-            timestamp=time_too_early
+            timestamp=time_too_early,
         )
 
         _, result = stepview.data.main(aws_profiles=["profile1"], period=Time.HOUR)
@@ -396,7 +398,7 @@ class TestStepViewCli(unittest.TestCase):
 
     @patch("stepview.entrypoint.main")
     @patch.object(App, "run")
-    def test_cli(self, m_textual_run,  m_main):
+    def test_cli(self, m_textual_run, m_main):
         m_main.return_value = ("foo", "bar")
         # for some reason i cannot call the run function when instantiating
         # StepViewTui (subclass of textual.app.App) in this test.
@@ -407,15 +409,21 @@ class TestStepViewCli(unittest.TestCase):
 
     @patch("stepview.entrypoint.main")
     @patch.object(App, "run")
-    def test_cli_tags(self, m_textual_run,  m_main):
+    def test_cli_tags(self, m_textual_run, m_main):
         m_main.return_value = ("foo", "bar")
         # for some reason i cannot call the run function when instantiating
         # StepViewTui (subclass of textual.app.App) in this test.
         result = self.runner.invoke(
-            stepview.entrypoint.app, ["--profile", "profile1,profile2,profile3", "--tags", "foo=bar,baz=qux", "--verbose"]
+            stepview.entrypoint.app,
+            [
+                "--profile",
+                "profile1,profile2,profile3",
+                "--tags",
+                "foo=bar,baz=qux",
+                "--verbose",
+            ],
         )
         self.assertEqual(0, result.exit_code)
-
 
     def test_verbose(self):
         pass
