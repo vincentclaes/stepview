@@ -1,6 +1,6 @@
 # StepView
 
-Follow up on AWS Stepfunctions over different accounts, over different regions, in the terminal.
+Follow up on all your AWS Stepfunctions over different accounts, over different regions, right from the terminal.
 
 ![stepview](./assets/stepview.png)
 
